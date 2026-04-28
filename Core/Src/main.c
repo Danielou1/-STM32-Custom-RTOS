@@ -81,11 +81,13 @@ void Task1_Einschalten(void)
 {
     while(1)
     {
-        /* LD2 ist an PB7 angeschlossen */
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);
-        
+        /* LD1 ist an PA5 angeschlossen */
+        HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+
         /* Aktives Warten (Verschwendung von CPU-Zeit zur Demonstration) */
         for(volatile uint32_t i = 0; i < 1000000; i++);
+        Kernel_RequestContextSwitch();
+
     }
 }
 
@@ -96,10 +98,12 @@ void Task2_Ausschalten(void)
 {
     while(1)
     {
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
-        
+        /* LD2 ist an PB14 angeschlossen */
+        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);
+
         /* Aktives Warten */
         for(volatile uint32_t i = 0; i < 1000000; i++);
+        Kernel_RequestContextSwitch();
     }
 }
 /* USER CODE END 0 */
@@ -149,8 +153,8 @@ int main(void)
   
   /* 2. Unsere beiden Test-Tasks registrieren */
   /* Die Priorität ist momentan 1 für beide (Round-Robin) */
-  Kernel_CreateNewTask(Task1_Einschalten, 1);
-  Kernel_CreateNewTask(Task2_Ausschalten, 1);
+  Kernel_CreateNewTask(Task1_Einschalten);
+  Kernel_CreateNewTask(Task2_Ausschalten);
   
   /* 3. Den Scheduler starten - Ab hier übernimmt das RTOS die Kontrolle! */
   Kernel_StartScheduling();
@@ -514,7 +518,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOE, M24SR64_Y_RF_DISABLE_Pin|M24SR64_Y_GPO_Pin|ISM43362_RST_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, ARD_D10_Pin|SPBTLE_RF_RST_Pin|ARD_D9_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, ARD_D10_Pin|GPIO_PIN_5|SPBTLE_RF_RST_Pin|ARD_D9_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, ARD_D8_Pin|ISM43362_BOOT0_Pin|ISM43362_WAKEUP_Pin|LED2_Pin
@@ -570,8 +574,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF8_UART4;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : ARD_D10_Pin SPBTLE_RF_RST_Pin ARD_D9_Pin */
-  GPIO_InitStruct.Pin = ARD_D10_Pin|SPBTLE_RF_RST_Pin|ARD_D9_Pin;
+  /*Configure GPIO pins : ARD_D10_Pin PA5 SPBTLE_RF_RST_Pin ARD_D9_Pin */
+  GPIO_InitStruct.Pin = ARD_D10_Pin|GPIO_PIN_5|SPBTLE_RF_RST_Pin|ARD_D9_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -591,8 +595,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(ARD_D7_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : ARD_D13_Pin ARD_D12_Pin ARD_D11_Pin */
-  GPIO_InitStruct.Pin = ARD_D13_Pin|ARD_D12_Pin|ARD_D11_Pin;
+  /*Configure GPIO pins : ARD_D12_Pin ARD_D11_Pin */
+  GPIO_InitStruct.Pin = ARD_D12_Pin|ARD_D11_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;

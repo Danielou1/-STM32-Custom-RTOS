@@ -22,6 +22,7 @@
 #include "stm32l4xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "kernel.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -41,7 +42,6 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN PV */
-
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -51,11 +51,6 @@
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-#include "kernel.h"
-
-/* Zugriff auf die globalen Kernel-Variablen */
-extern TCB_sctTCB_t *Global_PointerToCurrentlyRunningTCB;
-extern void Kernel_WaehleNaechsteTaskAus(void);
 
 /* USER CODE END 0 */
 
@@ -169,41 +164,6 @@ void DebugMon_Handler(void)
   /* USER CODE END DebugMonitor_IRQn 1 */
 }
 
-/**
-  * @brief This function handles Pendable request for system service.
-  */
-void PendSV_Handler(void)
-{
-  /* USER CODE BEGIN PendSV_IRQn 0 */
-  __asm volatile (
-      "cpsid i\n"                         /* 1. Interrupts deaktivieren (kritischer Abschnitt) */
-      
-      "mrs r0, msp\n"                     /* 2. Aktuellen Stack-Pointer laden */
-      "stmdb r0!, {r4-r11}\n"             /* 3. R4-R11 auf dem Stack sichern */
-      
-      "ldr r1, =Global_PointerToCurrentlyRunningTCB\n" /* 4. Adresse des aktuellen TCB-Pointers laden */
-      "ldr r1, [r1]\n"                    /* 5. Den TCB selbst laden */
-      "str r0, [r1, #12]\n"               /* 6. Den neuen SP im TCB speichern (Offset #12 für u32TaskSP) */
-
-      "push {lr}\n"                       /* 7. Link-Register sichern */
-      "bl Kernel_WaehleNaechsteTaskAus\n" /* 8. Nächste Task auswählen (C-Funktion) */
-      "pop {lr}\n"                        /* 9. Link-Register wiederherstellen */
-
-      "ldr r1, =Global_PointerToCurrentlyRunningTCB\n" /* 10. Adresse des neuen TCB-Pointers laden */
-      "ldr r1, [r1]\n"                    /* 11. Den neuen TCB laden */
-      "ldr r0, [r1, #12]\n"               /* 12. Den Stack-Pointer der neuen Task laden */
-
-      "ldmia r0!, {r4-r11}\n"             /* 13. R4-R11 der neuen Task vom Stack laden */
-      "msr msp, r0\n"                     /* 14. Den MSP auf den neuen Stack setzen */
-      
-      "cpsie i\n"                         /* 15. Interrupts wieder aktivieren */
-      "bx lr\n"                           /* 16. Rückkehr aus dem Interrupt */
-  );
-  /* USER CODE END PendSV_IRQn 0 */
-  /* USER CODE BEGIN PendSV_IRQn 1 */
-
-  /* USER CODE END PendSV_IRQn 1 */
-}
 
 /**
   * @brief This function handles System tick timer.
