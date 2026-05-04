@@ -50,4 +50,4 @@ A global security flag `Global_OsIsRunning` prevents the `SysTick` from triggeri
 ---
 
 ## Documentation
-Detailed forensic analysis and project logs are maintained in `RTOS_Dokumentation_Detail_2026-04-27.tex`.
+Detaillierte Definitionen, Funktionszyklen und technische Analysen sind in `RTOS_Dokumentation.tex` (Deutsch) dokumentiert.
