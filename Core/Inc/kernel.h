@@ -1,8 +1,8 @@
 /*
  * kernel.h
  *
- * Created on: Apr 27, 2026
- * Author: Danielou Mounsande
+ * Erstellt am: 27. Apr 2026
+ * Autor: Danielou Mounsande
  */
 
 #ifndef DOS_INC_KERNEL_H_
@@ -10,16 +10,16 @@
 
 #include "tcb.h"
 
-/// Maximum number of tasks in the system
+/// Maximale Anzahl von Tasks im System
 #define KERNEL_MAXIMUM_NUMBER_OF_TASKS                    ( 6u )
 
-/// IDLE Task priority (lowest) - Tu peux le laisser ou le supprimer, on ne l'utilise plus
+/// IDLE Task Priorität (niedrigste) - Kann belassen oder entfernt werden, wird nicht mehr verwendet
 #define KERNEL_IDLE_TASK_PRIORITY                         ( 255u )
 
-/// Function pointer for task entry point
+/// Funktionszeiger für den Task-Einstiegspunkt
 typedef void (*Kernel_TaskEntryPointFunctionPointer_t)(void);
 
-/// Error codes for kernel functions
+/// Fehlercodes für Kernel-Funktionen
 typedef enum
 {
     KernelError_NoErrorMessage = 0,
@@ -29,28 +29,28 @@ typedef enum
 } Kernel_ErrorStatus_Enumeration_t;
 
 /**
- * @brief Initializes the kernel hardware and internal structures.
+ * @brief Initialisiert die Kernel-Hardware und interne Strukturen.
  */
 void Kernel_InitializeHardwareAndTCBStructures(void);
 
 /**
- * @brief Creates a new task in the system.
- * @param taskFunctionPointer Pointer to the task function.
- * @return KernelError_NoErrorMessage if successful.
+ * @brief Erstellt einen neuen Task im System.
+ * @param taskFunctionPointer Zeiger auf die Task-Funktion.
+ * @return KernelError_NoErrorMessage bei Erfolg.
  */
 Kernel_ErrorStatus_Enumeration_t Kernel_CreateNewTask(Kernel_TaskEntryPointFunctionPointer_t taskFunctionPointer);
 
 /**
- * @brief Starts the scheduler and begins execution.
+ * @brief Startet den Scheduler und beginnt die Ausführung.
  */
 void Kernel_StartScheduling(void);
 
 /**
- * @brief Requests a context switch (via PendSV).
+ * @brief Fordert einen Kontextwechsel an (via PendSV).
  */
 void Kernel_RequestContextSwitch(void);
 
-/* Global pointer to the currently running task - Marked volatile for thread safety */
+/* Globaler Zeiger auf den aktuell laufenden Task - Für Threadsicherheit als volatile markiert */
 extern TCB_sctTCB_t * volatile Global_PointerToCurrentlyRunningTCB;
 
 #endif /* DOS_INC_KERNEL_H_ */

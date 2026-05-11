@@ -1,8 +1,8 @@
 /*
  * kernel.c
  *
- * Created on: Apr 27, 2026
- * Author: Danielou Mounsande
+ * Erstellt am: 27. Apr 2026
+ * Autor: Danielou Mounsande
  */
 
 #include "kernel.h"
@@ -10,7 +10,7 @@
 #include "main.h"
 #include "tcb.h"
 
-/* --- Section 1: Définitions Matérielles (Cortex-M4) --- */
+/* --- Abschnitt 1: Hardware-Definitionen (Cortex-M4) --- */
 
 #define INTERRUPT_CONTROL_STATE_REGISTER_ADDRESS                             ( 0xE000ED04u )
 #define PENDSV_SET_BIT_MASK                                                  ( 1u << 28 )
@@ -19,31 +19,31 @@
 #define COPROCESSOR_ACCESS_CONTROL_REGISTER_ADDRESS                          ( 0xE000ED88u )
 #define CORTEX_M4_INITIAL_xPSR_VALUE                                         ( 1u << 24 )
 
-/* --- Section 2: État Interne du Kernel --- */
+/* --- Abschnitt 2: Interner Zustand des Kernels --- */
 
 static TCB_sctTCB_t Global_ArrayOfAllTCBs[KERNEL_MAXIMUM_NUMBER_OF_TASKS] __attribute__((aligned(8)));
 static uint8_t Global_TotalNumberOfCreatedTasks = 0;
 static uint8_t Global_IndexDerAktuellenTask = 0;
-static uint8_t Global_OsIsRunning = 0; /* Verrou de sécurité au démarrage */
+static uint8_t Global_OsIsRunning = 0; /* Sicherheitsverriegelung beim Start */
 
 TCB_sctTCB_t * volatile Global_PointerToCurrentlyRunningTCB = NULL;
 
 
-/* --- Section 3: Fonctions Internes et Hooks --- */
+/* --- Abschnitt 3: Interne Funktionen und Hooks --- */
 
-/* Filet de sécurité : Si une tâche tente de faire un "return" ou se termine,
- * elle atterrira ici au lieu de provoquer un HardFault à l'adresse 0x00000000.
+/* Sicherheitsnetz: Wenn ein Task versucht ein "return" auszuführen oder beendet wird,
+ * landet er hier, anstatt einen HardFault bei Adresse 0x00000000 auszulösen.
  */
 static void Kernel_TaskReturnHook(void)
 {
     while(1)
     {
-        /* Si le débogueur s'arrête ici, c'est qu'une de tes tâches n'a pas de boucle while(1) ! */
+        /* Wenn der Debugger hier anhält, hat einer der Tasks keine while(1)-Schleife! */
         __asm volatile ("nop");
     }
 }
 
-/* Tâche par défaut pour occuper le CPU si rien d'autre ne tourne */
+/* Standard-Task, um die CPU auszulasten, wenn nichts anderes läuft */
 static void Kernel_IdleTask(void)
 {
     while(1)
@@ -52,42 +52,42 @@ static void Kernel_IdleTask(void)
     }
 }
 
-/* Ordonnanceur intelligent : prend l'ancien pointeur de pile, retourne le nouveau ! */
+/* Intelligenter Scheduler: nimmt den alten Stack-Pointer, gibt den neuen zurück! */
 uint32_t Kernel_ContextSwitch(uint32_t current_sp)
 {
-    /* DEBUG : Faire clignoter la LED3 (PC9) à chaque changement de contexte pour prouver que le Kernel vit */
+    /* DEBUG: LED3 (PC9) bei jedem Kontextwechsel umschalten, um zu beweisen, dass der Kernel lebt */
     HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_9);
 
-    /* 1. Sauvegarde le SP de la tâche sortante */
+    /* 1. Sichert den SP des ausgehenden Tasks */
     if (Global_PointerToCurrentlyRunningTCB != NULL)
     {
         Global_PointerToCurrentlyRunningTCB->u32TaskSP = current_sp;
     }
 
-    /* 2. Sélection de la tâche suivante (Round Robin) */
+    /* 2. Auswahl des nächsten Tasks (Round Robin) */
     Global_IndexDerAktuellenTask++;
     if (Global_IndexDerAktuellenTask >= Global_TotalNumberOfCreatedTasks)
     {
         Global_IndexDerAktuellenTask = 0;
     }
 
-    /* 3. Charge la nouvelle tâche */
+    /* 3. Lädt den neuen Task */
     Global_PointerToCurrentlyRunningTCB = &Global_ArrayOfAllTCBs[Global_IndexDerAktuellenTask];
     Global_PointerToCurrentlyRunningTCB->eTaskState = TaskState_Running;
 
-    /* 4. Retourne le pointeur de pile exact */
+    /* 4. Gibt den exakten Stack-Pointer zurück */
     return Global_PointerToCurrentlyRunningTCB->u32TaskSP;
 }
 
-/* --- Section 3: Fonctions de l'API du Kernel --- */
+/* --- Abschnitt 3: Funktionen der Kernel-API --- */
 
 void Kernel_InitializeHardwareAndTCBStructures(void)
 {
-    /* Désactiver la FPU (coprocesseur mathématique) pour simplifier le contexte */
+    /* FPU (mathematischer Koprozessor) deaktivieren*/
     volatile uint32_t *cpacr = (volatile uint32_t *)COPROCESSOR_ACCESS_CONTROL_REGISTER_ADDRESS;
     *cpacr &= ~(0xFu << 20);
 
-    /* Mettre la priorité de PendSV au plus bas possible */
+    /* Priorität von PendSV auf den niedrigstmöglichen Wert setzen */
     volatile uint8_t *shpr3 = (volatile uint8_t *)SYSTEM_HANDLER_PRIORITY_REGISTER_3_ADDRESS;
     *shpr3 = PENDSV_PRIORITY_LOWEST;
 
@@ -95,7 +95,7 @@ void Kernel_InitializeHardwareAndTCBStructures(void)
     Global_TotalNumberOfCreatedTasks = 0;
     Global_PointerToCurrentlyRunningTCB = NULL;
 
-    /* Création automatique de la tâche Idle en position 0 */
+    /* Automatische Erstellung des Idle-Tasks an Position 0 */
     Kernel_CreateNewTask(Kernel_IdleTask);
 }
 
@@ -107,23 +107,23 @@ Kernel_ErrorStatus_Enumeration_t Kernel_CreateNewTask(Kernel_TaskEntryPointFunct
     TCB_sctTCB_t *pTCB = &Global_ArrayOfAllTCBs[Global_TotalNumberOfCreatedTasks];
     pTCB->eTaskState = TaskState_Ready;
 
-    /* 1. Placement du pointeur de pile à la FIN du tableau (Full Descending) */
+    /* 1. Platzierung des Stack-Pointers am ENDE des Arrays (Full Descending) */
     uint32_t *sp = &pTCB->au32TaskStack[TCB_TASK_STACK_SIZE];
 
-    /* 2. Alignement strict sur 8 octets (exigence matérielle ARM) */
+    /* 2. Strikte Ausrichtung auf 8 Bytes (ARM-Hardwareanforderung) */
     sp = (uint32_t *)(((uint32_t)sp) & 0xFFFFFFF8u);
 
-    /* 3. Faux cadre de pile (Dummy Stack Frame) */
-    *(--sp) = CORTEX_M4_INITIAL_xPSR_VALUE;                  /* xPSR (Bit 24 à 1 impératif) */
-    *(--sp) = (uint32_t)taskFunctionPointer | 0x01u;         /* PC (Program Counter) + Bit Thumb */
-    *(--sp) = (uint32_t)Kernel_TaskReturnHook | 0x01u;       /* LR (Link Register) + Bit Thumb */
+    /* 3. Gefälschter Stack-Frame (Dummy Stack Frame) */
+    *(--sp) = CORTEX_M4_INITIAL_xPSR_VALUE;                  /* xPSR (Bit 24 zwingend auf 1) */
+    *(--sp) = (uint32_t)taskFunctionPointer | 0x01u;         /* PC (Program Counter) + Thumb-Bit */
+    *(--sp) = (uint32_t)Kernel_TaskReturnHook | 0x01u;       /* LR (Link Register) + Thumb-Bit */
     *(--sp) = 0x12121212u;                                   /* R12 */
     *(--sp) = 0x03030303u;                                   /* R3 */
     *(--sp) = 0x02020202u;                                   /* R2 */
     *(--sp) = 0x01010101u;                                   /* R1 */
-    *(--sp) = 0x00000000u;                                   /* R0 (Paramètre de la fonction) */
+    *(--sp) = 0x00000000u;                                   /* R0 (Parameter der Funktion) */
 
-    /* 4. Sauvegarde des registres restants (R4 à R11) */
+    /* 4. Sicherung der restlichen Register (R4 bis R11) */
     *(--sp) = 0x11111111u; /* R11 */
     *(--sp) = 0x10101010u; /* R10 */
     *(--sp) = 0x09090909u; /* R9 */
@@ -133,7 +133,7 @@ Kernel_ErrorStatus_Enumeration_t Kernel_CreateNewTask(Kernel_TaskEntryPointFunct
     *(--sp) = 0x05050505u; /* R5 */
     *(--sp) = 0x04040404u; /* R4 */
 
-    /* 5. On sauvegarde la position actuelle du pointeur dans le TCB */
+    /* 5. Wir speichern die aktuelle Position des Pointers im TCB */
     pTCB->u32TaskSP = (uint32_t)sp;
 
     Global_TotalNumberOfCreatedTasks++;
@@ -145,17 +145,17 @@ void Kernel_StartScheduling(void)
 {
     if (Global_TotalNumberOfCreatedTasks > 0)
     {
-        Global_OsIsRunning = 1;        /* DÉVERROUILLAGE : Le système est prêt ! */
+        Global_OsIsRunning = 1;        /* ENTSPERRUNG: Das System ist bereit! */
         Global_PointerToCurrentlyRunningTCB = NULL;
-        __enable_irq();                /* On s'assure que les interruptions sont activées */
-        Kernel_RequestContextSwitch(); /* Déclenche le premier changement de contexte */
-        while(1);                      /* On ne doit jamais sortir d'ici */
+        __enable_irq();                /* Wir stellen sicher, dass die Interrupts aktiviert sind */
+        Kernel_RequestContextSwitch(); /* Löst den ersten Kontextwechsel aus */
+        while(1);                      /* Wir dürfen hier niemals herauskommen */
     }
 }
 
 void Kernel_RequestContextSwitch(void)
 {
-    /* On ignore la demande si l'OS n'est pas encore lancé (sécurité SysTick) */
+    /* Wir ignorieren die Anfrage, wenn das OS noch nicht gestartet ist (SysTick-Sicherheit) */
     if (Global_OsIsRunning == 1)
     {
         volatile uint32_t *icsr = (volatile uint32_t *)INTERRUPT_CONTROL_STATE_REGISTER_ADDRESS;
@@ -166,32 +166,24 @@ void Kernel_RequestContextSwitch(void)
 __attribute__((naked)) void PendSV_Handler(void)
 {
     __asm volatile (
-        "cpsid i\n"              /* Désactive les interruptions */
+        "cpsid i\n"              /* Deaktiviert die Interrupts */
 
-        "mrs r0, msp\n"          /* R0 = MSP actuel (Sera le 1er argument pour la fonction C !) */
+        "mrs r0, msp\n"          /* R0 = aktueller MSP (Wird das 1. Argument für die C-Funktion sein!) */
 
-        /* Vérifie si on est au premier démarrage */
-        "ldr r1, =Global_PointerToCurrentlyRunningTCB\n"
-        "ldr r2, [r1]\n"
-        "cbz r2, SKIP_SAVE\n"
+        /* Sichern des Software-Kontexts */
+        "stmdb r0!, {r4-r11}\n"  /* Legt R4-R11 auf den Stack (R0 wird aktualisiert) */
+        "msr msp, r0\n"          /* SPERREN des Stacks im Speicher */
+        /* C-Aufruf mit strikter Einhaltung der ARM-Architektur (AAPCS) */
+        "push {r3, lr}\n"        /* 8-Byte-Ausrichtung + Sichern des Rückgabecodes */
+        "bl Kernel_ContextSwitch\n" /* Ruft C auf. R0 enthält 'current_sp'. C gibt 'new_sp' in R0 zurück! */
+        "pop {r3, lr}\n"         /* Stellt den Rückgabecode wieder her */
+        /* Wiederherstellung des neuen Kontexts */
+        "ldmia r0!, {r4-r11}\n"  /* R0 enthält den neuen Stack. Wir holen R4-R11. */
+        "msr msp, r0\n"          /* Aktualisiert den Hardware-Pointer! */
+        "isb\n"                  /* Leert die Pipeline */
 
-        /* Sauvegarde du contexte logiciel */
-        "stmdb r0!, {r4-r11}\n"  /* Empile R4-R11 (R0 est mis à jour) */
-        "msr msp, r0\n"          /* VERROUILLAGE de la pile en mémoire */
-
-        "SKIP_SAVE:\n"
-        /* Appel C avec respect strict de l'architecture ARM (AAPCS) */
-        "push {r3, lr}\n"        /* Alignement 8 octets + Sauvegarde du code de retour */
-        "bl Kernel_ContextSwitch\n" /* Appelle le C. R0 contient 'current_sp'. Le C retourne 'new_sp' dans R0 ! */
-        "pop {r3, lr}\n"         /* Restaure le code de retour */
-
-        /* Restauration du nouveau contexte */
-        "ldmia r0!, {r4-r11}\n"  /* R0 contient la nouvelle pile. On dépile R4-R11. */
-        "msr msp, r0\n"          /* Met à jour le pointeur matériel ! */
-        "isb\n"                  /* Vide le pipeline */
-
-        "cpsie i\n"              /* Réactive les interruptions */
-        "bx lr\n"                /* Retourne dans la tâche avec succès ! */
+        "cpsie i\n"              /* Reaktiviert die Interrupts */
+        "bx lr\n"                /* Kehrt erfolgreich in den Task zurück! */
         ".align 4\n"
     );
 }

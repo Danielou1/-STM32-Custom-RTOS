@@ -16,8 +16,8 @@ typedef enum
 } TCB_eTastStates_t;
 
 /**
- * TCB Simplifié pour débogage HardFault/BusFault.
- * Le Stack Pointer DOIT être le premier membre (Offset 0).
+ * Vereinfachter TCB für HardFault/BusFault-Debugging.
+ * Der Stack Pointer MUSS das erste Mitglied sein (Offset 0).
  */
 typedef struct
 {
