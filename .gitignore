@@ -1,0 +1,24 @@
+# STM32CubeIDE / Eclipse
+Debug/
+Release/
+.metadata/
+.settings/
+*.launch
+*.list
+*.map
+*.elf
+
+# LaTeX
+*.aux
+*.log
+*.toc
+*.out
+*.pdf
+*.gz
+*.synctex.gz
+*.blg
+*.bbl
+
+# OS spezifisch
+Thumbs.db
+.DS_Store
