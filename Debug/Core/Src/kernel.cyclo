@@ -1,0 +1,8 @@
+../Core/Src/kernel.c:37:13:Kernel_TaskReturnHook	1
+../Core/Src/kernel.c:47:13:Kernel_IdleTask	1
+../Core/Src/kernel.c:56:10:Kernel_ContextSwitch	3
+../Core/Src/kernel.c:84:6:Kernel_InitializeHardwareAndTCBStructures	1
+../Core/Src/kernel.c:102:34:Kernel_CreateNewTask	3
+../Core/Src/kernel.c:144:6:Kernel_StartScheduling	2
+../Core/Src/kernel.c:156:6:Kernel_RequestContextSwitch	2
+../Core/Src/kernel.c:166:29:PendSV_Handler	1

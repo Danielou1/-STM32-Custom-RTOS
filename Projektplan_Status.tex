@@ -1,0 +1,59 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[ngerman]{babel}
+\usepackage[T1]{fontenc}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{tabularx}
+
+\title{Projektplan \& Status: Echtzeitsysteme (SS26)}
+\author{Danielou Mounsande}
+\date{Stand: 05. Mai 2026}
+
+\begin{document}
+
+\maketitle
+
+\section{Aktueller Status (KW 19 - 05. Mai)}
+Das Projekt befindet sich exakt im Zeitplan. Der \textbf{Meilenstein Minimalprojekt} (2 Tasks, Round-Robin) ist de facto erreicht.
+
+\subsection{Abgeschlossen (Basis-Funktionen)}
+\begin{itemize}
+    \item \textbf{Setup:} Projekt \& System aufgesetzt.
+    \item \textbf{Task-Implementierung:} TCB-Struktur definiert und Task-Erstellung (Dummy Stack Frame) implementiert.
+    \item \textbf{Context Switch:} Hybrider Wechsel (PendSV Assembler + C-Logik). Sichern von R4-R11 und Hardware-Stacking funktionieren fehlerfrei.
+    \item \textbf{Scheduler RR:} Einfaches präemptives Round-Robin Scheduling via SysTick (Zeitscheiben) ist aktiv.
+\end{itemize}
+
+\section{Der Weg nach vorn (Ab KW 20)}
+Gemäß dem Zeitplan von Prof. Schmidt aus \texttt{02\_Tasks\_SS26.pdf} beginnt nun die Phase der \textbf{Kernel Objekte}.
+
+\subsection{Nächster Schritt (Priorität 1): Blocking-State \& Delay}
+Aktuell nutzen Tasks \textit{Busy-Waiting} (for-Schleifen). Das Skript (Folie 26) fordert zwingend einen \textbf{Blocking-State}.
+\begin{itemize}
+    \item \textbf{To-Do:} TCB um \texttt{u32TicksToWait} erweitern.
+    \item \textbf{To-Do:} \texttt{Kernel\_Delay(ticks)} implementieren (Task in Blocked-State versetzen, Yield anfordern).
+    \item \textbf{To-Do:} SysTick-Handler anpassen, um wartende Tasks zu aktualisieren.
+\end{itemize}
+
+\subsection{Kommende Kernel Objekte (Zeitplan)}
+\begin{table}[h]
+    \centering
+    \begin{tabularx}{\textwidth}{|l|l|X|}
+    \hline
+    \textbf{Woche} & \textbf{Thema} & \textbf{Ziel} \\ \hline
+    KW 20 & Scheduler Update & Verfeinerung Präemptives RR \& Task States. \\ \hline
+    KW 21 & Synchronisation & Semaphoren \& Mutexe implementieren. \\ \hline
+    KW 22 & Kommunikation & Message Queues einbauen. \\ \hline
+    KW 23 & \textbf{Meilenstein} & \textbf{Kernel-Objekte abgeschlossen.} \\ \hline
+    \end{tabularx}
+\end{table}
+
+\subsection{Verifizierung \& Dokumentation (KW 24+)}
+\begin{itemize}
+    \item \textbf{Instrumentierung:} Integration von Segger SystemView zur visuellen Analyse des Schedulers.
+    \item \textbf{Test-Pipeline:} Setup der TeSSLa Pipeline und Spezifizierung der Tests.
+    \item \textbf{Abschluss:} Dokumentation verfassen und Puffer-Zeit nutzen.
+\end{itemize}
+
+\end{document}

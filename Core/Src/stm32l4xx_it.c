@@ -171,6 +171,7 @@ void DebugMon_Handler(void)
 void SysTick_Handler(void)
 {
   /* USER CODE BEGIN SysTick_IRQn 0 */
+  Kernel_UpdateTimers();
   Kernel_RequestContextSwitch();
   /* USER CODE END SysTick_IRQn 0 */
   HAL_IncTick();

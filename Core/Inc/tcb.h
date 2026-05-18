@@ -21,9 +21,10 @@ typedef enum
  */
 typedef struct
 {
-    uint32_t u32TaskSP;                          /* Offset 0 */
-    TCB_eTastStates_t eTaskState;                /* Offset 4 */
-    uint32_t au32TaskStack[TCB_TASK_STACK_SIZE]; /* Offset 8 */
+    uint32_t u32TaskSP;                          /* Offset 0: Aktueller Stack Pointer */
+    TCB_eTastStates_t eTaskState;                /* Offset 4: Zustand der Task */
+    uint32_t u32TicksToWait;                     /* Offset 8: Verbleibende Zeit im Blocked-State */
+    uint32_t au32TaskStack[TCB_TASK_STACK_SIZE]; /* Offset 12: Eigener Stack-Bereich */
 } __attribute__((aligned(8))) TCB_sctTCB_t;
 
 #endif /* DOS_INC_TCB_H_ */

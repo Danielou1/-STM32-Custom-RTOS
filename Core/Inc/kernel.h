@@ -41,6 +41,18 @@ void Kernel_InitializeHardwareAndTCBStructures(void);
 Kernel_ErrorStatus_Enumeration_t Kernel_CreateNewTask(Kernel_TaskEntryPointFunctionPointer_t taskFunctionPointer);
 
 /**
+ * @brief Versetzt die aktuelle Task für eine bestimmte Zeit in den Blocked-State.
+ * @param u32DelayInTicks Anzahl der System-Ticks (ms) zum Warten.
+ */
+void Kernel_TaskDelay(uint32_t u32DelayInTicks);
+
+/**
+ * @brief Aktualisiert die Wartezeiten aller blockierten Tasks. 
+ * Sollte im SysTick-Handler aufgerufen werden.
+ */
+void Kernel_UpdateTimers(void);
+
+/**
  * @brief Startet den Scheduler und beginnt die Ausführung.
  */
 void Kernel_StartScheduling(void);

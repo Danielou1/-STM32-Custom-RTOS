@@ -1,0 +1,155 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[ngerman]{babel}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\title{RTOS Dokumentation: Danielou OS (DOS)}
+\author{Danielou Mounsande}
+\date{\today}
+
+\definecolor{mGreen}{rgb}{0,0.6,0}
+\definecolor{mGray}{rgb}{0.5,0.5,0.5}
+\definecolor{mPurple}{rgb}{0.58,0,0.82}
+\lstset{
+    commentstyle=\color{mGreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{mGray},
+    stringstyle=\color{mPurple},
+    basicstyle=\footnotesize\ttfamily,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2,
+    language=C,
+    extendedchars=true,
+    literate={ü}{{\"u}}1 {ä}{{\"a}}1 {ö}{{\"o}}1 {ß}{{\ss}}1
+}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Einleitung}
+Diese Dokumentation dient als technisches Referenzwerk für die Entwicklung des eigenen Echtzeitbetriebssystems (DOS) auf dem STM32L475. Sie beschreibt die Architektur, die Funktionszyklen und dokumentiert die Lösungen für kritische Probleme.
+
+\section{Technische Definitionen (Glossar)}
+
+\subsection{TCB (Task Control Block)}
+Der TCB ist der \textbf{Personalausweis} eines Tasks. In DOS wird er durch die Struktur \texttt{TCB\_sctTCB\_t} definiert.
+\begin{itemize}
+    \item \textbf{u32TaskSP:} Der aktuelle Stack Pointer des Tasks. Er liegt an Offset 0 für schnellen Assembler-Zugriff.
+    \item \textbf{eTaskState:} Zustand des Tasks (Ready, Running, Blocked).
+    \item \textbf{u32TicksToWait:} Verbleibende System-Ticks, die eine Task im Blocked-Zustand verharren muss.
+    \item \textbf{au32TaskStack:} Reservierter Speicherbereich für den Task-Stack.
+\end{itemize}
+
+\subsection{Stack Frame (Stapelrahmen)}
+\begin{itemize}
+    \item \textbf{Hardware Stack Frame:} Wird vom Cortex-M4 automatisch gesichert (xPSR, PC, LR, R12, R3, R2, R1, R0).
+    \item \textbf{Software Stack Frame:} Wird vom Kernel manuell gesichert (R4 bis R11).
+\end{itemize}
+
+\subsection{System-Register \& Hardware-Steuerung}
+\begin{itemize}
+    \item \textbf{CPACR (Coprocessor Access Control Register):} Steuert den Zugriff auf Coprozessoren. Wir nutzen es, um die FPU (Floating Point Unit) zu deaktivieren. Dies vereinfacht den Kontextwechsel, da wir sonst 32 zusätzliche Register (S0-S31) sichern müssten.
+    \item \textbf{SHPR3 (System Handler Priority Register 3):} Hier setzen wir die Priorität von \textbf{PendSV} auf den niedrigsten Wert (0xFF). Das sorgt dafür, dass ein Task-Wechsel niemals kritische Hardware-Interrupts blockiert.
+    \item \textbf{PendSV:} Ausnahme mit niedrigster Priorität für den eigentlichen Kontextwechsel.
+    \item \textbf{SysTick:} Taktgeber für die präemptive Zeitsteuerung (Heartbeat).
+    \item \textbf{ICSR (Interrupt Control State Register):} Ein Steuerregister des Cortex-M, über das wir den PendSV-Interrupt per Software auslösen können.
+\end{itemize}
+
+\subsection{AAPCS \& Register R0}
+\begin{itemize}
+    \item \textbf{AAPCS:} Der \textit{Procedure Call Standard for ARM} definiert die Regeln für Funktionsaufrufe.
+    \item \textbf{Register R0 (Die Schnittstelle):} R0 ist besonders, da es laut Standard zwei Rollen hat:
+    \begin{enumerate}
+        \item \textbf{Input:} Das erste Argument einer C-Funktion wird in R0 übergeben.
+        \item \textbf{Output:} Der Rückgabewert einer Funktion wird in R0 zurückgegeben.
+    \end{enumerate}
+    In unserem Kernel nutzen wir R0, um den Stack-Pointer zwischen Assembler und C zu übergeben.
+\end{itemize}
+
+\subsection{Alignment (Ausrichtung)}
+Gemäß AAPCS muss der Stack Pointer bei Funktionsaufrufen auf \textbf{8 Byte (64-Bit)} ausgerichtet sein. Dies ist notwendig für Befehle wie \texttt{LDRD/STRD} und die FPU. Ohne dieses Alignment kann es zu \texttt{UsageFaults} kommen.
+
+\section{Funktionszyklen}
+
+\subsection{Task-Erstellungszyklus}
+\begin{enumerate}
+    \item \textbf{Allokation:} TCB aus dem globalen Array entnehmen.
+    \item \textbf{Initialisierung (Dummy Stack Frame):}
+    \begin{itemize}
+        \item PC auf Task-Funktion setzen + Thumb-Bit (LSB=1).
+        \item xPSR Bit 24 auf 1 setzen.
+        \item LR auf \texttt{Kernel\_TaskReturnHook} setzen.
+    \end{itemize}
+    \item \textbf{Bereitstellung:} Zustand auf \texttt{TaskState\_Ready} setzen.
+\end{enumerate}
+
+\subsection{Kontextwechsel-Zyklus (Scheduling)}
+1. \textbf{Trigger:} SysTick setzt das PendSV-Bit im ICSR. \\
+2. \textbf{Assembler (PendSV):} Sichert R4-R11, ruft \texttt{Kernel\_ContextSwitch} auf. \\
+3. \textbf{C-Logik:} Sichert alten SP im TCB, wählt neuen Task (Round Robin), gibt neuen SP zurück. \\
+4. \textbf{Wiederherstellung:} Assembler lädt R4-R11 vom neuen Stack, aktualisiert MSP, \texttt{bx lr} stellt Hardware-Frame wieder her.
+
+\section{Forensische Analyse: Die großen Probleme}
+
+\subsection{Der INVPC (0x00040000) Absturz}
+\textbf{Problem:} HardFault mit Invalid PC load.\\
+\textbf{Ursache:} Das LSB (Least Significant Bit) des Task-PC war 0. ARM Cortex-M unterstützt nur den \textbf{Thumb-Modus}. Wenn das LSB 0 ist, versucht der Prozessor in den ARM-Modus zu wechseln, was zum Absturz führt.\\
+\textbf{Lösung:} Erzwingen von \texttt{address | 0x01} bei der Task-Erstellung sowie ein Cast nach \texttt{(uint32_t)}, um Bit-Operationen auf Adressen zu ermöglichen.
+
+\subsection{Null-Pointer Korruption \& Pipeline-Optimierung}
+\textbf{Problem:} Der erste Kontextwechsel benötigt eine Sonderbehandlung, da noch kein Task läuft. Früher wurde dies über einen \texttt{cbz}-Check im Assembler gelöst.\\
+\textbf{Lösung:} Verschiebung der Initialisierungs-Logik in die C-Ebene (\texttt{Kernel\_ContextSwitch}). Der Assembler-Teil bleibt linear und performant ("Autobahn-Prinzip"), während C entscheidet, ob ein SP gespeichert werden muss.
+
+\section{FAQ: Häufig gestellte Fragen}
+
+\subsection{Warum nutzen wir nur den MSP?}
+Zur Vereinfachung. In professionellen Systemen trennt man MSP (Kernel) und PSP (User), um den Kernel vor Stack-Overflow der Tasks zu schützen.
+
+\subsection{Warum R4-R11 manuell sichern?}
+Das Hardware-Auto-Stacking sichert nur R0-R3, R12, LR, PC und xPSR. Ein RTOS muss den kompletten Zustand (inkl. R4-R11) bewahren, damit lokale Variablen der Tasks nicht korrumpiert werden.
+
+\subsection{Warum \texttt{\_\_attribute__((naked))}?}
+Dieser Attribut verhindert, dass der Compiler automatisch Prolog- und Epilog-Code (Stack-Manipulation) für den \texttt{PendSV\_Handler} generiert. Ohne dies würde der Compiler den Stack verändern, bevor wir den exakten CPU-Zustand sichern können.
+
+\subsection{Was bewirkt \texttt{nop} im Idle-Task?}
+\texttt{nop} (No Operation) verhindert, dass der Compiler eine leere Endlosschleife wegoptimiert. Es hält die CPU in einem kontrollierten Leerlauf.
+
+\subsection{Warum Dekrementierung (\texttt{--sp}) beim Stack-Aufbau?}
+Der Cortex-M nutzt einen \textbf{Full Descending Stack}. Wir müssen den Pointer erst verringern, um in den gültigen Speicherbereich des Arrays zu gelangen, bevor wir einen Wert schreiben (sonst droht ein Buffer Overflow).
+
+\section{Kernel Objekte \& Zeitsteuerung}
+
+\subsection{Blocking-State \& Kernel\_TaskDelay}
+Um CPU-Ressourcen zu schonen, wurde ein blockierendes Warten implementiert.
+\begin{enumerate}
+    \item \textbf{Aufruf:} Eine Task ruft \texttt{Kernel\_TaskDelay(ticks)} auf.
+    \item \textbf{Zustandswechsel:} Der Kernel setzt \texttt{eTaskState} auf \texttt{TaskState\_Blocked} und speichert die Zeit in \texttt{u32TicksToWait}.
+    \item \textbf{Yield:} Ein sofortiger Kontextwechsel wird erzwungen, damit andere Tasks laufen können.
+    \item \textbf{Update:} Im \texttt{SysTick\_Handler} wird jede Millisekunde \texttt{Kernel\_UpdateTimers()} aufgerufen.
+    \item \textbf{Wakeup:} Wenn \texttt{u32TicksToWait} Null erreicht, wird die Task zurück auf \texttt{TaskState\_Ready} gesetzt und vom Scheduler wieder berücksichtigt.
+\end{enumerate}
+
+\section{Referenzen}
+\begin{itemize}
+    \item PM0214: STM32 Cortex-M4 Programming Manual.
+    \item AAPCS Standard.
+    \item Kursunterlagen Echtzeitsysteme (THM SS26).
+\end{itemize}
+
+\end{document}

@@ -84,10 +84,8 @@ void Task1_Einschalten(void)
         /* LD1 ist an PA5 angeschlossen */
         HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
 
-        /* Aktives Warten (Verschwendung von CPU-Zeit zur Demonstration) */
-        for(volatile uint32_t i = 0; i < 1000000; i++);
-        Kernel_RequestContextSwitch();
-
+        /* 500ms Blockierendes Warten (Kernel-basiert) */
+        Kernel_TaskDelay(500);
     }
 }
 
@@ -96,14 +94,16 @@ void Task1_Einschalten(void)
  */
 void Task2_Ausschalten(void)
 {
+    /* Zu Beginn 250ms warten, damit die LEDs versetzt blinken */
+    Kernel_TaskDelay(250);
+
     while(1)
     {
         /* LD2 ist an PB14 angeschlossen */
         HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);
 
-        /* Aktives Warten */
-        for(volatile uint32_t i = 0; i < 1000000; i++);
-        Kernel_RequestContextSwitch();
+        /* 500ms Blockierendes Warten */
+        Kernel_TaskDelay(500);
     }
 }
 /* USER CODE END 0 */

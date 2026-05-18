@@ -62,13 +62,27 @@ uint32_t Kernel_ContextSwitch(uint32_t current_sp)
     if (Global_PointerToCurrentlyRunningTCB != NULL)
     {
         Global_PointerToCurrentlyRunningTCB->u32TaskSP = current_sp;
+        
+        /* Wenn die Task nicht blockiert ist, setzen wir sie zurück auf Ready */
+        if (Global_PointerToCurrentlyRunningTCB->eTaskState == TaskState_Running)
+        {
+            Global_PointerToCurrentlyRunningTCB->eTaskState = TaskState_Ready;
+        }
     }
 
-    /* 2. Auswahl des nächsten Tasks (Round Robin) */
-    Global_IndexDerAktuellenTask++;
-    if (Global_IndexDerAktuellenTask >= Global_TotalNumberOfCreatedTasks)
+    /* 2. Auswahl des nächsten Tasks (Round Robin über alle READY Tasks) */
+    for (uint8_t i = 0; i < Global_TotalNumberOfCreatedTasks; i++)
     {
-        Global_IndexDerAktuellenTask = 0;
+        Global_IndexDerAktuellenTask++;
+        if (Global_IndexDerAktuellenTask >= Global_TotalNumberOfCreatedTasks)
+        {
+            Global_IndexDerAktuellenTask = 0;
+        }
+
+        if (Global_ArrayOfAllTCBs[Global_IndexDerAktuellenTask].eTaskState == TaskState_Ready)
+        {
+            break; /* Passende Task gefunden! */
+        }
     }
 
     /* 3. Lädt den neuen Task */
@@ -106,6 +120,7 @@ Kernel_ErrorStatus_Enumeration_t Kernel_CreateNewTask(Kernel_TaskEntryPointFunct
 
     TCB_sctTCB_t *pTCB = &Global_ArrayOfAllTCBs[Global_TotalNumberOfCreatedTasks];
     pTCB->eTaskState = TaskState_Ready;
+    pTCB->u32TicksToWait = 0;
 
     /* 1. Platzierung des Stack-Pointers am ENDE des Arrays (Full Descending) */
     uint32_t *sp = &pTCB->au32TaskStack[TCB_TASK_STACK_SIZE];
@@ -139,6 +154,40 @@ Kernel_ErrorStatus_Enumeration_t Kernel_CreateNewTask(Kernel_TaskEntryPointFunct
     Global_TotalNumberOfCreatedTasks++;
 
     return KernelError_NoErrorMessage;
+}
+
+void Kernel_TaskDelay(uint32_t u32DelayInTicks)
+{
+    if (Global_PointerToCurrentlyRunningTCB != NULL && u32DelayInTicks > 0)
+    {
+        /* Kritischer Abschnitt: Task blockieren */
+        Global_PointerToCurrentlyRunningTCB->u32TicksToWait = u32DelayInTicks;
+        Global_PointerToCurrentlyRunningTCB->eTaskState = TaskState_Blocked;
+
+        /* Sofortigen Kontextwechsel anfordern, da die Task nicht mehr laufen kann */
+        Kernel_RequestContextSwitch();
+    }
+}
+
+void Kernel_UpdateTimers(void)
+{
+    /* Gehe alle Tasks durch (außer Idle an Index 0, die schläft nie) */
+    for (uint8_t i = 1; i < Global_TotalNumberOfCreatedTasks; i++)
+    {
+        if (Global_ArrayOfAllTCBs[i].eTaskState == TaskState_Blocked)
+        {
+            if (Global_ArrayOfAllTCBs[i].u32TicksToWait > 0)
+            {
+                Global_ArrayOfAllTCBs[i].u32TicksToWait--;
+            }
+
+            /* Zeit abgelaufen? Task wieder bereit machen */
+            if (Global_ArrayOfAllTCBs[i].u32TicksToWait == 0)
+            {
+                Global_ArrayOfAllTCBs[i].eTaskState = TaskState_Ready;
+            }
+        }
+    }
 }
 
 void Kernel_StartScheduling(void)
