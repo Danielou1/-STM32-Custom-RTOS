@@ -121,6 +121,7 @@ Kernel_ErrorStatus_Enumeration_t Kernel_CreateNewTask(Kernel_TaskEntryPointFunct
     TCB_sctTCB_t *pTCB = &Global_ArrayOfAllTCBs[Global_TotalNumberOfCreatedTasks];
     pTCB->eTaskState = TaskState_Ready;
     pTCB->u32TicksToWait = 0;
+    pTCB->pWaitingObject = NULL;
 
     /* 1. Platzierung des Stack-Pointers am ENDE des Arrays (Full Descending) */
     uint32_t *sp = &pTCB->au32TaskStack[TCB_TASK_STACK_SIZE];
@@ -210,6 +211,81 @@ void Kernel_RequestContextSwitch(void)
         volatile uint32_t *icsr = (volatile uint32_t *)INTERRUPT_CONTROL_STATE_REGISTER_ADDRESS;
         *icsr = PENDSV_SET_BIT_MASK;
     }
+}
+
+/* --- Abschnitt 4: Semaphore-Logik --- */
+
+void Kernel_SemaphoreInit(Kernel_Semaphore_t *pSemaphore, uint32_t u32InitialCount, uint32_t u32MaxCount)
+{
+    if (pSemaphore != NULL)
+    {
+        pSemaphore->u32Count = u32InitialCount;
+        pSemaphore->u32MaxCount = u32MaxCount;
+    }
+}
+
+void Kernel_SemaphoreWait(Kernel_Semaphore_t *pSemaphore)
+{
+    /* Kritischer Abschnitt: Unterbrechungen deaktivieren */
+    __disable_irq();
+
+    if (pSemaphore != NULL)
+    {
+        if (pSemaphore->u32Count > 0)
+        {
+            /* Ressource verfügbar: Jeton nehmen */
+            pSemaphore->u32Count--;
+        }
+        else
+        {
+            /* Ressource NICHT verfügbar: Task blockieren */
+            if (Global_PointerToCurrentlyRunningTCB != NULL)
+            {
+                Global_PointerToCurrentlyRunningTCB->pWaitingObject = (void*)pSemaphore;
+                Global_PointerToCurrentlyRunningTCB->eTaskState = TaskState_Blocked;
+
+                /* Kontextwechsel anfordern, da diese Task warten muss */
+                Kernel_RequestContextSwitch();
+            }
+        }
+    }
+
+    __enable_irq();
+}
+
+void Kernel_SemaphoreGive(Kernel_Semaphore_t *pSemaphore)
+{
+    /* Kritischer Abschnitt: Unterbrechungen deaktivieren */
+    __disable_irq();
+
+    if (pSemaphore != NULL)
+    {
+        /* 1. Jeton zurückgeben (bis zum Maximum) */
+        if (pSemaphore->u32Count < pSemaphore->u32MaxCount)
+        {
+            pSemaphore->u32Count++;
+        }
+
+        /* 2. Prüfen, ob eine Task auf GENAU DIESES Semaphor wartet */
+        for (uint8_t i = 0; i < Global_TotalNumberOfCreatedTasks; i++)
+        {
+            if (Global_ArrayOfAllTCBs[i].eTaskState == TaskState_Blocked &&
+                Global_ArrayOfAllTCBs[i].pWaitingObject == (void*)pSemaphore)
+            {
+                /* 3. Task aufwecken */
+                Global_ArrayOfAllTCBs[i].eTaskState = TaskState_Ready;
+                Global_ArrayOfAllTCBs[i].pWaitingObject = NULL;
+
+                /* 4. Kontextwechsel anfordern */
+                Kernel_RequestContextSwitch();
+
+                /* Nur eine Task pro freigegebenem Jeton aufwecken */
+                break;
+            }
+        }
+    }
+
+    __enable_irq();
 }
 
 __attribute__((naked)) void PendSV_Handler(void)

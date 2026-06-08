@@ -19,6 +19,15 @@
 /// Funktionszeiger für den Task-Einstiegspunkt
 typedef void (*Kernel_TaskEntryPointFunctionPointer_t)(void);
 
+/**
+ * @brief Struktur für ein Semaphor-Objekt.
+ */
+typedef struct
+{
+    uint32_t u32Count;         /* Aktuelle Anzahl der verfügbaren Jetons */
+    uint32_t u32MaxCount;      /* Maximale Kapazität (verhindert Logikfehler) */
+} Kernel_Semaphore_t;
+
 /// Fehlercodes für Kernel-Funktionen
 typedef enum
 {
@@ -61,6 +70,26 @@ void Kernel_StartScheduling(void);
  * @brief Fordert einen Kontextwechsel an (via PendSV).
  */
 void Kernel_RequestContextSwitch(void);
+
+/**
+ * @brief Initialisiert ein Semaphor.
+ * @param pSemaphore Zeiger auf das Semaphor-Objekt.
+ * @param u32InitialCount Startwert der Jetons.
+ * @param u32MaxCount Maximalwert der Jetons.
+ */
+void Kernel_SemaphoreInit(Kernel_Semaphore_t *pSemaphore, uint32_t u32InitialCount, uint32_t u32MaxCount);
+
+/**
+ * @brief Versucht, einen Jeton vom Semaphor zu nehmen (Wait/Pend).
+ * @param pSemaphore Zeiger auf das Semaphor-Objekt.
+ */
+void Kernel_SemaphoreWait(Kernel_Semaphore_t *pSemaphore);
+
+/**
+ * @brief Gibt einen Jeton an das Semaphor zurück (Signal/Post).
+ * @param pSemaphore Zeiger auf das Semaphor-Objekt.
+ */
+void Kernel_SemaphoreGive(Kernel_Semaphore_t *pSemaphore);
 
 /* Globaler Zeiger auf den aktuell laufenden Task - Für Threadsicherheit als volatile markiert */
 extern TCB_sctTCB_t * volatile Global_PointerToCurrentlyRunningTCB;

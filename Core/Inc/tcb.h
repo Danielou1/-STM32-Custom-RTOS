@@ -24,7 +24,8 @@ typedef struct
     uint32_t u32TaskSP;                          /* Offset 0: Aktueller Stack Pointer */
     TCB_eTastStates_t eTaskState;                /* Offset 4: Zustand der Task */
     uint32_t u32TicksToWait;                     /* Offset 8: Verbleibende Zeit im Blocked-State */
-    uint32_t au32TaskStack[TCB_TASK_STACK_SIZE]; /* Offset 12: Eigener Stack-Bereich */
+    void *pWaitingObject;                        /* Offset 12: Objekt, auf das die Task wartet (z.B. ein Semaphor) */
+    uint32_t au32TaskStack[TCB_TASK_STACK_SIZE]; /* Offset 16: Eigener Stack-Bereich */
 } __attribute__((aligned(8))) TCB_sctTCB_t;
 
 #endif /* DOS_INC_TCB_H_ */
