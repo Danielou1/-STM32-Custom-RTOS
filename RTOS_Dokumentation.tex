@@ -145,6 +145,31 @@ Um CPU-Ressourcen zu schonen, wurde ein blockierendes Warten implementiert.
     \item \textbf{Wakeup:} Wenn \texttt{u32TicksToWait} Null erreicht, wird die Task zurück auf \texttt{TaskState\_Ready} gesetzt und vom Scheduler wieder berücksichtigt.
 \end{enumerate}
 
+\subsection{Semaphore: Synchronisation und Ressourcenschutz}
+Semaphoren ermöglichen die Koordination von Tasks. In DOS wurde eine effiziente Blockier-Logik implementiert.
+
+\subsubsection{Der "Wait"-Zyklus}
+Wenn eine Task \texttt{Kernel\_SemaphoreWait} aufruft:
+\begin{enumerate}
+    \item \textbf{Kritischer Abschnitt:} Interrupts werden deaktiviert (\texttt{cpsid i}), um atomaren Zugriff auf den Zähler zu garantieren.
+    \item \textbf{Prüfung:} Wenn \texttt{u32Count > 0}, wird der Zähler dekrementiert und die Task läuft sofort weiter.
+    \item \textbf{Blockierung:} Wenn \texttt{u32Count == 0}:
+    \begin{itemize}
+        \item Die Adresse des Semaphors wird im TCB-Feld \texttt{pWaitingObject} gespeichert.
+        \item Der Zustand wechselt auf \texttt{TaskState\_Blocked}.
+        \item Ein Kontextwechsel wird angefordert.
+    \end{itemize}
+\end{enumerate}
+
+\subsubsection{Der "Give"-Zyklus}
+Wenn eine Task \texttt{Kernel\_SemaphoreGive} aufruft:
+\begin{enumerate}
+    \item \textbf{Inkrementierung:} Der Zähler wird erhöht (bis zum definierten \texttt{u32MaxCount}).
+    \item \textbf{Gezielte Suche:} Der Kernel durchläuft alle TCBs und sucht nach einer Task, deren \texttt{pWaitingObject} exakt auf die Adresse dieses Semaphors zeigt.
+    \item \textbf{Wakeup:} Die gefundene Task wird auf \texttt{TaskState\_Ready} gesetzt und \texttt{pWaitingObject} wird gelöscht (\texttt{NULL}).
+    \item \textbf{Dispatch:} Ein Kontextwechsel wird ausgelöst, damit die aufgeweckte Task ggf. sofort übernehmen kann.
+\end{enumerate}
+
 \section{Referenzen}
 \begin{itemize}
     \item PM0214: STM32 Cortex-M4 Programming Manual.
