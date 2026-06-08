@@ -15,23 +15,22 @@
 \maketitle
 
 \section{Aktueller Status (KW 24 - 08. Juni)}
-Das Projekt hat nach einer Verzögerung die wichtige Phase der Kernel-Objekte erreicht. Der Fokus liegt nun auf der Konsolidierung der Synchronisationsmechanismen.
+Das Projekt hat nach einer Verzögerung die wichtige Phase der Kernel-Objekte erreicht. Die Synchronisation ist nun weit fortgeschritten.
 
 \subsection{Abgeschlossen (Kernel-Erweiterungen)}
 \begin{itemize}
-    \item \textbf{Blocking-State \& Delay (KW 20):} Tasks können nun mittels \texttt{Kernel\_TaskDelay} effizient pausieren, ohne CPU-Last zu erzeugen.
-    \item \textbf{Semaphoren (KW 23/24):} Vollständige Implementierung von Zähl-Semaphoren. Inklusive TCB-Erweiterung (\texttt{pWaitingObject}) für gezieltes Aufwecken blockierter Tasks.
-    \item \textbf{Dokumentation:} Die technische Dokumentation ist auf dem Stand der Semaphor-Implementierung.
+    \item \textbf{Blocking-State \& Delay (KW 20):} Effizientes Warten ohne CPU-Last.
+    \item \textbf{Semaphoren (KW 23):} Vollständige Implementierung von Zähl-Semaphoren.
+    \item \textbf{Prioritätsbasiertes Scheduling (KW 24):} Der Scheduler wählt nun immer die Task mit der höchsten Priorität (kleinste Zahl).
+    \item \textbf{Mutexe (KW 24):} Implementierung mit \texttt{Ownership}-Prüfung abgeschlossen.
 \end{itemize}
 
 \section{Der Weg nach vorn (KW 24+)}
 
-\subsection{Nächster Schritt (Priorität 1): Mutexe \& Priority Inheritance}
-Da Semaphoren das Risiko der \textit{Prioritätsinversion} bergen, ist die Implementierung von Mutexen der nächste kritische Schritt.
+\subsection{Nächster Schritt (Morgen früh): Priority Inheritance}
+Um das RTOS gegen Prioritätsinversion abzusichern, wird morgen die Vererbungslogik finalisiert.
 \begin{itemize}
-    \item \textbf{To-Do:} Mutex-Struktur mit \texttt{Owner}-Feld (Ownership-Prinzip) definieren.
-    \item \textbf{To-Do:} \texttt{Lock/Unlock}-Logik implementieren (nur der Besitzer darf freigeben).
-    \item \textbf{To-Do:} Mechanismus zur Vermeidung von Prioritätsinversion (Priority Inheritance) entwerfen.
+    \item \textbf{Ziel:} Temporäre Anhebung der Priorität des Mutex-Besitzers bei Ressourcen-Konflikten.
 \end{itemize}
 
 \subsection{Verbleibende Kernel Objekte}

@@ -170,7 +170,25 @@ Wenn eine Task \texttt{Kernel\_SemaphoreGive} aufruft:
     \item \textbf{Dispatch:} Ein Kontextwechsel wird ausgelöst, damit die aufgeweckte Task ggf. sofort übernehmen kann.
 \end{enumerate}
 
-\section{Referenzen}
+\subsection{Mutexe: Gegenseitiger Ausschluss mit Ownership}
+Ein Mutex ist ein spezielles binäres Semaphor mit dem Konzept des Besitzes (\textbf{Ownership}). Nur die Task, die den Mutex gesperrt hat, darf ihn wieder freigeben.
+
+\subsubsection{Ownership-Logik}
+\begin{itemize}
+    \item Beim \texttt{Lock} wird im Mutex-Objekt ein Zeiger \texttt{pOwner} auf den aktuellen TCB gespeichert.
+    \item Beim \texttt{Unlock} prüft der Kernel: \texttt{if (pMutex->pOwner == Global\_PointerToCurrentlyRunningTCB)}.
+    \item Dies verhindert, dass Tasks fälschlicherweise Ressourcen freigeben, die sie nicht kontrollieren.
+\end{itemize}
+
+\subsection{Vorschau: Priority Inheritance (Prioritätsvererbung)}
+Um das Problem der \textbf{Prioritätsinversion} zu lösen, wird aktuell die Prioritätsvererbung implementiert. 
+\begin{enumerate}
+    \item \textbf{Szenario:} Eine hochpriore Task wartet auf einen Mutex, den eine niedrigpriore Task hält.
+    \item \textbf{Aktion:} Die niedrigpriore Task "erbt" temporär die Priorität der wartenden hochprioren Task.
+    \item \textbf{Ziel:} Die niedrigpriore Task kann schneller fertig werden (wird nicht von mittleren Tasks unterbrochen) und gibt die Ressource für die hochpriore Task frei.
+\end{enumerate}
+Status: Die TCB-Felder und der prioritätsbasierte Scheduler sind bereits vorbereitet.
+
 \begin{itemize}
     \item PM0214: STM32 Cortex-M4 Programming Manual.
     \item AAPCS Standard.
