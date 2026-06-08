@@ -54,7 +54,7 @@ UART_HandleTypeDef huart3;
 PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
 /* USER CODE BEGIN PV */
-
+Kernel_Semaphore_t MyTestSemaphore;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -75,35 +75,50 @@ void Task2_Ausschalten(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 /**
- * Task 1: Schaltet die grüne LED ein.
+ * Task 1: Nimmt das Semaphor und schaltet die LED ein.
  */
 void Task1_Einschalten(void)
 {
     while(1)
     {
-        /* LD1 ist an PA5 angeschlossen */
-        HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+        /* Warte auf den Jeton (Blockiert, wenn Task 2 ihn hat) */
+        Kernel_SemaphoreWait(&MyTestSemaphore);
 
-        /* 500ms Blockierendes Warten (Kernel-basiert) */
-        Kernel_TaskDelay(500);
+        /* LD1 (Grün) einschalten (PA5) */
+        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+
+        /* Halte die Ressource für 1 Sekunde */
+        Kernel_TaskDelay(1000);
+
+        /* Jeton zurückgeben */
+        Kernel_SemaphoreGive(&MyTestSemaphore);
+        
+        /* Kurze Pause, damit der Scheduler wechseln kann */
+        Kernel_TaskDelay(10);
     }
 }
 
 /**
- * Task 2: Schaltet die grüne LED aus.
+ * Task 2: Nimmt das Semaphor und schaltet die LED aus.
  */
 void Task2_Ausschalten(void)
 {
-    /* Zu Beginn 250ms warten, damit die LEDs versetzt blinken */
-    Kernel_TaskDelay(250);
-
     while(1)
     {
-        /* LD2 ist an PB14 angeschlossen */
-        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);
+        /* Warte auf den Jeton (Blockiert, wenn Task 1 ihn hat) */
+        Kernel_SemaphoreWait(&MyTestSemaphore);
 
-        /* 500ms Blockierendes Warten */
-        Kernel_TaskDelay(500);
+        /* LD1 (Grün) ausschalten (PA5) */
+        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+
+        /* Halte die Ressource für 1 Sekunde */
+        Kernel_TaskDelay(1000);
+
+        /* Jeton zurückgeben */
+        Kernel_SemaphoreGive(&MyTestSemaphore);
+        
+        /* Kurze Pause, damit der Scheduler wechseln kann */
+        Kernel_TaskDelay(10);
     }
 }
 /* USER CODE END 0 */
@@ -150,8 +165,11 @@ int main(void)
   
   /* 1. Kernel-Strukturen vorbereiten */
   Kernel_InitializeHardwareAndTCBStructures();
+
+  /* 2. Semaphor initialisieren (Startwert 1 Jeton, Max 1) */
+  Kernel_SemaphoreInit(&MyTestSemaphore, 1, 1);
   
-  /* 2. Unsere beiden Test-Tasks registrieren */
+  /* 3. Unsere beiden Test-Tasks registrieren */
   /* Die Priorität ist momentan 1 für beide (Round-Robin) */
   Kernel_CreateNewTask(Task1_Einschalten);
   Kernel_CreateNewTask(Task2_Ausschalten);
