@@ -180,15 +180,59 @@ Ein Mutex ist ein spezielles binäres Semaphor mit dem Konzept des Besitzes (\te
     \item Dies verhindert, dass Tasks fälschlicherweise Ressourcen freigeben, die sie nicht kontrollieren.
 \end{itemize}
 
-\subsection{Vorschau: Priority Inheritance (Prioritätsvererbung)}
-Um das Problem der \textbf{Prioritätsinversion} zu lösen, wird aktuell die Prioritätsvererbung implementiert. 
-\begin{enumerate}
-    \item \textbf{Szenario:} Eine hochpriore Task wartet auf einen Mutex, den eine niedrigpriore Task hält.
-    \item \textbf{Aktion:} Die niedrigpriore Task "erbt" temporär die Priorität der wartenden hochprioren Task.
-    \item \textbf{Ziel:} Die niedrigpriore Task kann schneller fertig werden (wird nicht von mittleren Tasks unterbrochen) und gibt die Ressource für die hochpriore Task frei.
-\end{enumerate}
-Status: Die TCB-Felder und der prioritätsbasierte Scheduler sind bereits vorbereitet.
+\subsection{Priority Inheritance (Prioritätsvererbung)}
+Um das Problem der unbeschränkten \textbf{Prioritätsinversion} zu lösen, wurde ein vollständiges Prioritätsvererbungs-Protokoll (PIP) im Kernel implementiert.
 
+\subsubsection{Vererbungs-Mechanismus (Lock)}
+Wenn eine hochpriore Task $H$ einen Mutex sperren will, der von einer niedrigprioren Task $L$ gehalten wird:
+\begin{enumerate}
+    \item \textbf{Detektion:} Der Kernel stellt fest, dass der Mutex gesperrt ist (\texttt{u8IsLocked == 1}) and ermittelt den Besitzer (\texttt{pOwner}).
+    \item \textbf{Vergleich:} Falls die aktuelle Priorität von $H$ höher ist (kleinere Zahl) als die des Besitzers $L$, wird die Priorität von $L$ temporär angehoben:
+    \begin{align*}
+        L.\text{u8CurrentPriority} = H.\text{u8CurrentPriority}
+    \end{align*}
+    \item \textbf{Transitive Vererbung (Kettenbildung):} Falls die Task $L$ ihrerseits blockiert ist und auf einen anderen Mutex wartet, der von einer Task $M$ gehalten wird, breitet sich die Prioritätsvererbung rekursiv über die Kette aus. Die Task $M$ erbt ebenfalls die Priorität von $H$.
+\end{enumerate}
+
+\subsubsection{Rückvererbungs-Mechanismus (Unlock)}
+Wenn die Task $L$ den Mutex wieder freigibt:
+\begin{enumerate}
+    \item \textbf{Prioritätsberechnung:} Die Task $L$ darf nicht blind auf ihre Basis-Priorität (\texttt{u8BasePriority}) zurückfallen, falls sie noch \textbf{andere} Mutexe hält, auf die andere hochpriore Tasks warten.
+    \item \textbf{Scannen:} Der Kernel durchsucht alle TCBs im System. Für jede blockierte Task, die auf einen Mutex wartet, der sich im Besitz von $L$ befindet, wird deren Priorität ausgewertet.
+    \item \textbf{Wiederherstellung:} Die neue Priorität von $L$ wird auf das Maximum (höchste Priorität / kleinste Zahl) aus ihrer Basis-Priorität und den Prioritäten aller auf sie wartenden Tasks gesetzt.
+    \item \textbf{Bereitstellung:} Der am höchsten priorisierte wartende Thread auf dem freigegebenen Mutex wird aufgeweckt.
+\end{enumerate}
+
+\section{Message Queues: Inter-Task-Kommunikation}
+Zur sicheren Übertragung von Daten und Synchronisation zwischen Tasks wurden Message Queues implementiert.
+
+\subsection{Struktur und Pufferung}
+Eine Message Queue (\texttt{Kernel\_Queue\_t}) basiert auf einem Ringpuffer mit fester maximaler Kapazität (\texttt{KERNEL\_QUEUE\_MAX\_SIZE} = 16 Elemente).
+Die Verwaltung erfolgt über folgende Felder:
+\begin{itemize}
+    \item \textbf{au32Buffer:} Ein Array aus 32-Bit-Ganzzahlen, das Rohdaten oder Zeiger (Pointer) auf komplexe Strukturen aufnehmen kann.
+    \item \textbf{u8Head / u8Tail:} Schreib- und Lese-Zeiger im Ringpuffer.
+    \item \textbf{u8Count / u8Size:} Aktuelle Anzahl der Nachrichten und maximale Kapazität.
+\end{itemize}
+
+\subsection{Send- und Receive-Betriebsmodi}
+Die Kernel-API bietet für Lese- und Schreiboperationen sowohl blockierende als auch nicht-blockierende Aufrufe:
+
+\subsubsection{Schreiben (Send)}
+\begin{itemize}
+    \item \textbf{Puffer frei:} Die Nachricht wird in den Puffer geschrieben, \texttt{u8Head} inkrementiert (modulo \texttt{u8Size}), and die am höchsten priorisierte Task, die auf Daten wartet, wird aufgeweckt.
+    \item \textbf{Puffer voll (Nicht-Blockierend):} Die Funktion bricht sofort ab und liefert den Fehlercode \texttt{KernelError\_QueueFull}.
+    \item \textbf{Puffer voll (Blockierend):} Die schreibende Task wird in den Zustand \texttt{TaskState\_Blocked} versetzt and das \texttt{pWaitingObject} auf die Queue gesetzt. Sie wird erst reaktiviert, wenn ein Consumer Daten liest.
+\end{itemize}
+
+\subsubsection{Lesen (Receive)}
+\begin{itemize}
+    \item \textbf{Nachricht vorhanden:} Die Nachricht wird aus dem Puffer gelesen, \texttt{u8Tail} inkrementiert, and die am höchsten priorisierte Task, die auf freien Platz wartet, wird aufgeweckt.
+    \item \textbf{Puffer leer (Nicht-Blockierend):} Die Funktion bricht sofort ab und liefert den Fehlercode \texttt{KernelError\_QueueEmpty}.
+    \item \textbf{Puffer leer (Blockierend):} Die lesende Task blockiert und wartet, bis ein Producer Daten sendet.
+\end{itemize}
+
+\section{Referenzen}
 \begin{itemize}
     \item PM0214: STM32 Cortex-M4 Programming Manual.
     \item AAPCS Standard.

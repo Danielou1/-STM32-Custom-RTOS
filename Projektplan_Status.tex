@@ -8,48 +8,32 @@
 
 \title{Projektplan \& Status: Echtzeitsysteme (SS26)}
 \author{Danielou Mounsande}
-\date{Stand: 08. Juni 2026}
+\date{Stand: 23. Juni 2026}
 
 \begin{document}
 
 \maketitle
 
-\section{Aktueller Status (KW 24 - 08. Juni)}
-Das Projekt hat nach einer Verzögerung die wichtige Phase der Kernel-Objekte erreicht. Die Synchronisation ist nun weit fortgeschritten.
+\section{Aktueller Status (KW 26 - 23. Juni)}
+Das RTOS hat den Meilenstein der Kernel-Objekte und des Schedulers planmäßig erreicht. Alle Kernfunktionalitäten sind implementiert und auf Hardware verifiziert.
 
 \subsection{Abgeschlossen (Kernel-Erweiterungen)}
 \begin{itemize}
-    \item \textbf{Blocking-State \& Delay (KW 20):} Effizientes Warten ohne CPU-Last.
-    \item \textbf{Semaphoren (KW 23):} Vollständige Implementierung von Zähl-Semaphoren.
-    \item \textbf{Prioritätsbasiertes Scheduling (KW 24):} Der Scheduler wählt nun immer die Task mit der höchsten Priorität (kleinste Zahl).
-    \item \textbf{Mutexe (KW 24):} Implementierung mit \texttt{Ownership}-Prüfung abgeschlossen.
+    \item \textbf{Blocking-State \& Delay (KW 20):} Effizientes blockierendes Warten ohne CPU-Last.
+    \item \textbf{Semaphoren (KW 23):} Vollständige Implementierung von Counting Semaphores mit TCB-Blockierlogik.
+    \item \textbf{Prioritätsbasiertes Scheduling (KW 24):} Preemptive Prio-Scheduling (kleinste Zahl = höchste Prio).
+    \item \textbf{Mutexe \& Priority Inheritance (KW 24):} Mutex-Implementierung mit strenger Ownership-Prüfung und transitivem Prioritätsvererbungs-Protokoll zur Vermeidung von Prioritätsinversion.
+    \item \textbf{Message Queues (KW 25):} Ring-Buffer-basierte Kommunikationskanäle mit blockierenden und nicht-blockierenden Send/Receive Operationen.
+    \item \textbf{Meilenstein Kernel (KW 26):} Erfolgreicher Abschluss der Kernel-Objekte und Integrationstest auf Hardware via J-Link.
 \end{itemize}
 
-\section{Der Weg nach vorn (KW 24+)}
+\section{Der Weg nach vorn (KW 26+)}
 
-\subsection{Nächster Schritt (Morgen früh): Priority Inheritance}
-Um das RTOS gegen Prioritätsinversion abzusichern, wird morgen die Vererbungslogik finalisiert.
+\subsection{Nächster Schritt: Verifizierung \& Dokumentation (Abschlussphase)}
 \begin{itemize}
-    \item \textbf{Ziel:} Temporäre Anhebung der Priorität des Mutex-Besitzers bei Ressourcen-Konflikten.
+    \item \textbf{Instrumentierung:} Integration von Segger SystemView zur visuellen Laufzeitanalyse des Kernels.
+    \item \textbf{Verifizierung:} Spezifikation von Überwachungseigenschaften und Setup der TeSSLa Test-Pipeline.
+    \item \textbf{Feinschliff:} Vervollständigung der Abschlussdokumentation (RTOS\_Dokumentation.tex).
 \end{itemize}
-
-\subsection{Verbleibende Kernel Objekte}
-\begin{table}[h]
-    \centering
-    \begin{tabularx}{\textwidth}{|l|l|X|}
-    \hline
-    \textbf{Woche} & \textbf{Thema} & \textbf{Ziel} \\ \hline
-    KW 24 & Mutexe & Ownership \& Prioritätsinversion lösen. \\ \hline
-    KW 25 & Kommunikation & Message Queues für Datenübertragung. \\ \hline
-    KW 26 & \textbf{Meilenstein} & \textbf{Kernel-Objekte \& Scheduler-Feinschliff abgeschlossen.} \\ \hline
-    \end{tabularx}
-\end{table}
-
-\subsection{Verifizierung \& Dokumentation (Abschlussphase)}
-\begin{itemize}
-    \item \textbf{Instrumentierung:} Integration von Segger SystemView zur visuellen Analyse.
-    \item \textbf{Test-Pipeline:} Setup der TeSSLa Pipeline.
-\end{itemize}
-
 
 \end{document}
