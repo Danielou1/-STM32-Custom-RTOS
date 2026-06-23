@@ -10,6 +10,7 @@
 #include "main.h"
 #include "tcb.h"
 #include "SEGGER_SYSVIEW.h"
+#include <stdio.h>
 
 /* --- Abschnitt 1: Hardware-Definitionen (Cortex-M4) --- */
 
@@ -124,6 +125,13 @@ uint32_t Kernel_ContextSwitch(uint32_t current_sp)
 
     SEGGER_SYSVIEW_OnTaskStartExec((uint32_t)Global_PointerToCurrentlyRunningTCB);
 
+    /* TeSSLa Logging fuer Kontextwechsel */
+    printf("%lu: active_task = %d\r\n", HAL_GetTick(), Global_IndexDerAktuellenTask);
+    if (Global_IndexDerAktuellenTask == 1) {
+        printf("%lu: task_state = 1\r\n", HAL_GetTick());
+        printf("%lu: state_val = 2\r\n", HAL_GetTick()); // 2 = Running
+    }
+
     /* 4. Gibt den exakten Stack-Pointer zurück */
     return Global_PointerToCurrentlyRunningTCB->u32TaskSP;
 }
@@ -222,6 +230,12 @@ void Kernel_TaskDelay(uint32_t u32DelayInTicks)
         Global_PointerToCurrentlyRunningTCB->u32TicksToWait = u32DelayInTicks;
         Global_PointerToCurrentlyRunningTCB->eTaskState = TaskState_Blocked;
 
+        /* TeSSLa Logging fuer Task-Blockierung (Delay) */
+        if (Global_IndexDerAktuellenTask == 1) {
+            printf("%lu: task_state = 1\r\n", HAL_GetTick());
+            printf("%lu: state_val = 3\r\n", HAL_GetTick()); // 3 = Blocked
+        }
+
         /* Sofortigen Kontextwechsel anfordern, da die Task nicht mehr laufen kann */
         Kernel_RequestContextSwitch();
     }
@@ -243,6 +257,12 @@ void Kernel_UpdateTimers(void)
                 if (Global_ArrayOfAllTCBs[i].u32TicksToWait == 0)
                 {
                     Global_ArrayOfAllTCBs[i].eTaskState = TaskState_Ready;
+                    
+                    /* TeSSLa Logging fuer Aufwecken (Ready) */
+                    if (i == 1) {
+                        printf("%lu: task_state = 1\r\n", HAL_GetTick());
+                        printf("%lu: state_val = 1\r\n", HAL_GetTick()); // 1 = Ready
+                    }
                 }
             }
             /* Wenn Ticks == 0, bedeutet das, die Task wartet auf ein Objekt (Semaphor/Mutex)
@@ -375,6 +395,12 @@ void Kernel_MutexLock(Kernel_Mutex_t *pMutex)
             /* Mutex ist frei: Aktuelle Task wird Besitzer */
             pMutex->u8IsLocked = 1;
             pMutex->pOwner = Global_PointerToCurrentlyRunningTCB;
+            
+            /* TeSSLa Logging fuer Mutex Lock */
+            printf("%lu: mutex_id = 1\r\n", HAL_GetTick());
+            printf("%lu: mutex_task = %d\r\n", HAL_GetTick(), Global_IndexDerAktuellenTask);
+            printf("%lu: mutex_action = 1\r\n", HAL_GetTick()); // 1 = Lock
+
             __enable_irq();
             return; /* Erfolg: Wir besitzen den Mutex */
         }
@@ -385,6 +411,12 @@ void Kernel_MutexLock(Kernel_Mutex_t *pMutex)
             {
                 Global_PointerToCurrentlyRunningTCB->pWaitingObject = (void*)pMutex;
                 Global_PointerToCurrentlyRunningTCB->eTaskState = TaskState_Blocked;
+
+                /* TeSSLa Logging fuer Task-Blockierung auf Mutex */
+                if (Global_IndexDerAktuellenTask == 1) {
+                    printf("%lu: task_state = 1\r\n", HAL_GetTick());
+                    printf("%lu: state_val = 3\r\n", HAL_GetTick()); // 3 = Blocked
+                }
 
                 /* Priority Inheritance: Priorität des Mutex-Besitzers anheben */
                 TCB_sctTCB_t *pOwner = pMutex->pOwner;
@@ -447,6 +479,20 @@ void Kernel_MutexUnlock(Kernel_Mutex_t *pMutex)
             pMutex->u8IsLocked = 0;
             pMutex->pOwner = NULL;
 
+            /* TeSSLa Logging fuer Mutex Unlock */
+            {
+                uint8_t ownerIdx = 0;
+                for (uint8_t j = 0; j < Global_TotalNumberOfCreatedTasks; j++) {
+                    if (&Global_ArrayOfAllTCBs[j] == pOwner) {
+                        ownerIdx = j;
+                        break;
+                    }
+                }
+                printf("%lu: mutex_id = 1\r\n", HAL_GetTick());
+                printf("%lu: mutex_task = %d\r\n", HAL_GetTick(), ownerIdx);
+                printf("%lu: mutex_action = 0\r\n", HAL_GetTick()); // 0 = Unlock
+            }
+
             /* Prioritätsvererbung aufheben: Priorität neu berechnen */
             uint8_t u8NewPriority = pOwner->u8BasePriority;
             for (uint8_t i = 0; i < Global_TotalNumberOfCreatedTasks; i++)
@@ -492,6 +538,21 @@ void Kernel_MutexUnlock(Kernel_Mutex_t *pMutex)
                 /* Task bereit machen */
                 pTaskToWake->eTaskState = TaskState_Ready;
                 pTaskToWake->pWaitingObject = NULL;
+
+                /* TeSSLa Logging fuer Task-Aufwecken nach Mutex-Freigabe */
+                {
+                    uint8_t wakeIdx = 0;
+                    for (uint8_t j = 0; j < Global_TotalNumberOfCreatedTasks; j++) {
+                        if (&Global_ArrayOfAllTCBs[j] == pTaskToWake) {
+                            wakeIdx = j;
+                            break;
+                        }
+                    }
+                    if (wakeIdx == 1) {
+                        printf("%lu: task_state = 1\r\n", HAL_GetTick());
+                        printf("%lu: state_val = 1\r\n", HAL_GetTick()); // 1 = Ready
+                    }
+                }
 
                 /* Kontextwechsel anfordern */
                 Kernel_RequestContextSwitch();
