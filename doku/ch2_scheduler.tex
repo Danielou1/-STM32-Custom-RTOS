@@ -1,0 +1,147 @@
+\chapter{Scheduler und Kontextwechsel}
+\label{ch:scheduler}
+
+\section{Die Task-Control-Block (TCB) Struktur}
+Jeder Task im System wird durch einen Task-Control-Block (TCB) repräsentiert, der alle zur Verwaltung und Ausführung notwendigen Informationen speichert. In DOS ist der TCB in \lstinline|tcb.h| definiert:
+
+\begin{lstlisting}[language=C, caption={Definition des TCB in tcb.h}, label={lst:tcb_def}]
+typedef struct
+{
+    uint32_t u32TaskSP;                          /* Offset 0: Aktueller Stack Pointer */
+    TCB_eTastStates_t eTaskState;                /* Offset 4: Zustand der Task */
+    uint32_t u32TicksToWait;                     /* Offset 8: Verbleibende Zeit im Blocked-State */
+    void *pWaitingObject;                        /* Offset 12: Objekt, auf das die Task wartet */
+    uint8_t u8CurrentPriority;                   /* Offset 16: Aktuelle Prioritaet */
+    uint8_t u8BasePriority;                      /* Offset 17: Urspruengliche Prioritaet */
+    uint32_t au32TaskStack[TCB_TASK_STACK_SIZE]; /* Offset 20: Eigener Stack-Bereich */
+} __attribute__((aligned(8))) TCB_sctTCB_t;
+\end{lstlisting}
+
+\subsection{Detaillierte Feldbeschreibung}
+\begin{itemize}
+    \item \textbf{\lstinline|u32TaskSP| (Zeile 3):} Speichert den aktuellen Stack Pointer (SP) der Task. Dieser Zeiger muss das \textbf{erste Element} der Struktur sein (Offset 0), damit der Assembler-Code im \lstinline|PendSV_Handler| direkt per Offset 0 darauf zugreifen kann, ohne Struktur-Offsets zur Laufzeit berechnen zu müssen.
+    \item \textbf{\lstinline|eTaskState| (Zeile 4):} Gibt den aktuellen Zustand der Task an (\lstinline|TaskState_Ready|, \lstinline|TaskState_Running| oder \lstinline|TaskState_Blocked|).
+    \item \textbf{\lstinline|u32TicksToWait| (Zeile 5):} Speichert die Anzahl der verbleibenden System-Ticks (in Millisekunden), wenn sich die Task im Zustand \lstinline|TaskState_Blocked| befindet (z. B. nach einem Aufruf von \lstinline|Kernel_TaskDelay|).
+    \item \textbf{\lstinline|pWaitingObject| (Zeile 6):} Zeiger auf das Synchronisationsobjekt (Semaphor, Mutex oder Queue), auf das die Task aktuell wartet. Dies verhindert, dass Tasks fälschlicherweise aufgeweckt werden, bevor das Objekt freigegeben wird.
+    \item \textbf{\lstinline|u8CurrentPriority| (Zeile 7):} Die aktuelle Ausführungspriorität der Task. Diese kann sich durch den Prioritätsvererbungsprozess dynamisch erhöhen (kleinere Zahl = höhere Priorität).
+    \item \textbf{\lstinline|u8BasePriority| (Zeile 8):} Die statische Basispriorität, die der Task bei der Erstellung zugewiesen wurde. Sie dient dazu, die Priorität nach der Freigabe eines Mutexes wieder auf den Standardwert zurückzusetzen.
+    \item \textbf{\lstinline|au32TaskStack| (Zeile 9):} Ein lokales Array der Größe 128 Worten (512 Bytes), das als privater Stack für Variablen und Registerzustände der Task dient. Die Struktur ist per \lstinline|__attribute__((aligned(8)))| an eine 8-Byte-Grenze ausgerichtet, da der Cortex-M4 Double-Word-Stack-Ausrichtung erfordert.
+\end{itemize}
+
+\section{Stack-Initialisierung und gefälschter Stack-Frame}
+Wenn eine neue Task mit \lstinline|Kernel_CreateNewTask| registriert wird, bereitet DOS den Stack so vor, dass er wie nach einer Unterbrechung aussieht (Hardware-Stack-Frame). Dies nennt man einen \textit{gefälschten Stack-Frame} (Dummy Stack Frame).
+
+Der Code zur Vorbereitung des Stack-Pointers sieht wie folgt aus:
+
+\begin{lstlisting}[language=C, caption={Dummy Stack-Frame Initialisierung}, label={lst:stack_init}]
+// Stack Pointer an das Ende des Stack-Arrays setzen
+uint32_t *sp = &pTCB->au32TaskStack[TCB_TASK_STACK_SIZE];
+
+// 8-Byte-Ausrichtung gewaehrleisten
+sp = (uint32_t *)(((uint32_t)sp) & 0xFFFFFFF8u);
+
+// Initialen Stack-Frame belegen
+*(--sp) = CORTEX_M4_INITIAL_xPSR_VALUE;          /* xPSR (Bit 24 = 1) */
+*(--sp) = (uint32_t)taskFunctionPointer | 0x01u; /* PC + Thumb-Bit */
+*(--sp) = (uint32_t)Kernel_TaskReturnHook | 0x01u; /* LR + Thumb-Bit */
+*(--sp) = 0x12121212u;                           /* R12 */
+*(--sp) = 0x03030303u;                           /* R3 */
+*(--sp) = 0x02020202u;                           /* R2 */
+*(--sp) = 0x01010101u;                           /* R1 */
+*(--sp) = 0x00000000u;                           /* R0 */
+
+// Software-Kontext sichern (Register R4-R11)
+*(--sp) = 0x11111111u; /* R11 */
+// ... R10 bis R5 ...
+*(--sp) = 0x04040404u; /* R4 */
+
+pTCB->u32TaskSP = (uint32_t)sp;
+\end{lstlisting}
+
+\subsection{Detaillierte Code-Analyse}
+\begin{itemize}
+    \item \textbf{Zeile 2:} Der Stack des Cortex-M4 ist \textit{Full Descending} (vollständig absteigend). Daher zeigt der initiale SP auf das Ende des Stack-Speichers.
+    \item \textbf{Zeile 5:} Maskiert die unteren 3 Bits des Stack-Pointers, um sicherzustellen, dass die Adresse durch 8 teilbar ist. Dies verhindert Ausrichtungsfehler (Alignment Faults) bei LDRD/STRD Befehlen.
+    \item \textbf{Zeile 8:} Schreibt den Wert für das Register \lstinline|xPSR|. Hier muss zwingend das Bit 24 (T-Bit) gesetzt sein (\lstinline|1 << 24|), da der Cortex-M4 ausschließlich den Thumb-Instruktionssatz unterstützt. Ist dieses Bit 0, erzeugt die CPU beim Starten der Task sofort einen \lstinline|UsageFault| (Invalid State).
+    \item \textbf{Zeile 9:} Speichert die Startadresse der Task-Funktion im Program Counter (PC). Es wird ein \lstinline|OR| mit \lstinline|0x01| durchgeführt, um das LSB (Least Significant Bit) auf 1 zu setzen. Dies signalisiert dem ARM-Kern beim Sprung mit \lstinline|BX| oder \lstinline|POP|, dass der Thumb-Modus beibehalten wird.
+    \item \textbf{Zeile 10:} Setzt das Link Register (LR) auf den Rückkehr-Hook \lstinline|Kernel_TaskReturnHook|. Sollte ein Task fälschlicherweise seine Endlosschleife verlassen und mit \lstinline|return| enden, springt die CPU in diesen Hook und verfängt sich dort in einer sicheren Schleife, anstatt eine undefinierte Speicheradresse auszuführen.
+    \item \textbf{Zeilen 11--15:} Füllen die Scratch-Register (R12, R3, R2, R1) und das Parameter-Register R0 mit leicht erkennbaren Debugging-Werten (z. B. \lstinline|0x12121212|), um die Fehleranalyse im Stack-Viewer zu erleichtern.
+    \item \textbf{Zeilen 18--20:} Initialisieren die Register R4 bis R11, die bei einem normalen Interrupt nicht automatisch von der Hardware gerettet werden (Software-Kontext) und daher vom Scheduler manuell abgelegt werden.
+\end{itemize}
+
+\section{Prioritätsbasierter Scheduler-Algorithmus}
+Der Scheduler arbeitet prioritätsbasiert und wird in \lstinline|Kernel_ContextSwitch| in C ausgeführt. Wenn mehrere Tasks dieselbe höchste Priorität besitzen, wechselt DOS diese zyklisch ab (Round-Robin mit Fairness), um ein Verhungern (Starvation) von gleichpriorisierten Tasks zu verhindern.
+
+\begin{lstlisting}[language=C, caption={Scheduler-Suche in kernel.c}, label={lst:sched_search}]
+uint8_t u8HighestPrioFound = 255;
+uint8_t u8BestTaskIndex = 0; // Idle-Task als Fallback
+
+for (uint8_t i = 1; i <= Global_TotalNumberOfCreatedTasks; i++)
+{
+    // Suche startet bei der naechsten Task (Ringpuffer-Logik)
+    uint8_t idx = (Global_IndexDerAktuellenTask + i) % Global_TotalNumberOfCreatedTasks;
+    
+    if (Global_ArrayOfAllTCBs[idx].eTaskState == TaskState_Ready || 
+        Global_ArrayOfAllTCBs[idx].eTaskState == TaskState_Running)
+    {
+        if (Global_ArrayOfAllTCBs[idx].u8CurrentPriority < u8HighestPrioFound)
+        {
+            u8HighestPrioFound = Global_ArrayOfAllTCBs[idx].u8CurrentPriority;
+            u8BestTaskIndex = idx;
+        }
+    }
+}
+\end{lstlisting}
+
+\subsection{Funktionsweise der Fairness}
+Indem die Schleife in Zeile 4 bei \lstinline|Global_IndexDerAktuellenTask + 1| startet und per Modulo-Operation die Taskliste zyklisch durchläuft, wird sichergestellt, dass bei gleicher Priorität die nachfolgende Task in der Liste bevorzugt wird. Erst wenn eine absolut höhere Priorität (kleinere Prioritätsnummer) gefunden wird, überschreibt diese den Best-Index.
+
+\section{Der Kontextwechsel (PendSV-Handler)}
+Der Kontextwechsel wird asynchron über den \lstinline|PendSV|-Interrupt (Pending Supervisor Call) ausgelöst. Er ist als \lstinline|__attribute__((naked))| definiert, damit der Compiler keinen eigenen Prolog oder Epilog (wie z. B. das automatische Retten von R4-R7) erzeugt, da dies die Stack-Struktur zerstören würde.
+
+\begin{lstlisting}[language=C, caption={Assembler-Kontextwechsel im PendSV-Handler}, label={lst:pendsv}]
+__attribute__((naked)) void PendSV_Handler(void)
+{
+    __asm volatile (
+        "cpsid i\n"                 /* 1. Interrupts deaktivieren */
+        "mrs r0, msp\n"             /* R0 = aktueller MSP */
+        "stmdb r0!, {r4-r11}\n"     /* 2. Software-Kontext sichern */
+        "msr msp, r0\n"             /* MSP aktualisieren */
+        
+        "push {r3, lr}\n"           /* 3. 8-Byte Stack-Ausrichtung */
+        "bl Kernel_ContextSwitch\n" /* 4. C-Funktion aufrufen */
+        "pop {r3, lr}\n"            
+        
+        "ldmia r0!, {r4-r11}\n"     /* 5. Neuen Kontext laden */
+        "msr msp, r0\n"             /* Stack Pointer setzen */
+        "isb\n"                     /* Befehlspipeline leeren */
+        "cpsie i\n"                 /* Interrupts wieder aktivieren */
+        "bx lr\n"                   /* Rücksprung in neue Task */
+        ".align 4\n"
+    );
+}
+\end{lstlisting}
+
+\subsection{Detaillierte Zeilenbeschreibung}
+\begin{itemize}
+    \item \textbf{Zeile 4 (\lstinline|cpsid i|):} Deaktiviert alle maskierbaren Interrupts global, um sicherzustellen, dass die Stack-Pointer-Manipulation nicht durch einen anderen Interrupt unterbrochen wird (Atomarität).
+    \item \textbf{Zeile 5 (\lstinline|mrs r0, msp|):} Kopiert den aktuellen Wert des \textit{Main Stack Pointer} (MSP) in das Register R0. R0 dient gemäß dem ARM-Standard (AAPCS) als erstes Argument für die nachfolgende C-Funktion.
+    \item \textbf{Zeile 6 (\lstinline|stmdb r0!, {r4-r11}|):} Speichert die Register R4 bis R11 (den Software-Kontext) auf dem Stack. Das Ausrufezeichen bewirkt, dass R0 danach auf die neue niedrigere Adresse zeigt (Dekrementieren vor dem Speichern).
+    \item \textbf{Zeile 9 (\lstinline|push {r3, lr}|):} Da der Stack-Pointer vor dem Funktionsaufruf durch 8 teilbar sein muss und R3/LR zusammen 8 Bytes belegen, sichert dieser Befehl den Link Register Rücksprungcode und stellt gleichzeitig das korrekte Alignment sicher.
+    \item \textbf{Zeile 10 (\lstinline|bl Kernel_ContextSwitch|):} Springt in die C-Funktion. Diese liest den alten SP aus R0, wählt die nächste Task aus und gibt deren SP im Register R0 zurück.
+    \item \textbf{Zeile 13 (\lstinline|ldmia r0!, {r4-r11}|):} Lädt den neuen Software-Kontext (R4 bis R11) vom neuen Stack-Pointer, der von \lstinline|Kernel_ContextSwitch| in R0 zurückgeliefert wurde.
+    \item \textbf{Zeile 14 (\lstinline|msr msp, r0|):} Schreibt den aktualisierten Stack-Pointer zurück in das Hardware-Register \lstinline|msp|.
+    \item \textbf{Zeile 15 (\lstinline|isb|):} Der Instruction Synchronization Barrier Befehl stellt sicher, dass alle nachfolgenden Befehle aus dem Speicher neu geladen werden (wichtig, da sich der Stack und somit das LR geändert haben).
+    \item \textbf{Zeile 17 (\lstinline|bx lr|):} Führt den Rücksprung aus. LR enthält den Wert \lstinline|0xFFFFFFF9| (Return to Thread mode using Main Stack). Die CPU stellt daraufhin R0-R3, R12, LR, PC und xPSR automatisch wieder her.
+\end{itemize}
+
+\section{Verständnis- und Kontrollfragen}
+\begin{enumerate}
+    \item \textbf{Frage:} Was passiert, wenn bei der Stack-Initialisierung das LSB der Task-Funktionsadresse nicht auf 1 gesetzt wird?
+    
+    \textit{Antwort:} Wenn das LSB (Bit 0) der Funktionsadresse 0 ist, versucht der Cortex-M4 beim Anspringen der Task via \lstinline|bx lr| (oder durch die Hardware-Rückkehr aus dem Interrupt), in den ARM-Zustand (32-Bit ARM-Befehlssatz) zu wechseln. Da Cortex-M-Prozessoren jedoch ausschließlich den Thumb-Zustand (16/32-Bit-Mischbefehlssatz) unterstützen, löst dies sofort einen schwerwiegenden Hardware-Fehler aus, den so genannten \lstinline|UsageFault| mit gesetztem \lstinline|INVSTATE|-Bit (Invalid State). Das System stürzt augenblicklich ab.
+    
+    \item \textbf{Frage:} Warum wird der \lstinline|PendSV_Handler| als \lstinline|naked| deklariert?
+    
+    \textit{Antwort:} Die Deklaration \lstinline|__attribute__((naked))| weist den Compiler an, jeglichen automatisch generierten Code (Prolog/Epilog) für diese Funktion zu unterlassen. Normalerweise rettet ein GCC-Compiler bei Standardfunktionen Register auf dem Stack und bereinigt den Stack beim Verlassen. Da wir im Kontextwechsel den Stack-Pointer der aktuellen Task manipulieren und auf eine völlig andere Task umbiegen, würde der Compiler-Epilog auf dem falschen Stack arbeiten und falsche Registerwerte wiederherstellen, was zu Speicherzugriffsfehlern und Systemabstürzen führt.
+\end{enumerate}

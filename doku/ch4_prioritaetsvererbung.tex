@@ -1,0 +1,108 @@
+\chapter{Prioritätsvererbung (Priority Inheritance)}
+\label{ch:prioritaetsvererbung}
+
+\section{Das Problem der Prioritätsinversion}
+Prioritätsinversion (Priority Inversion) tritt in prioritätsgesteuerten Echtzeitsystemen auf, wenn eine hochpriorisierte Task (High) durch eine niedrigpriorisierte Task (Low) blockiert wird, weil diese eine gemeinsame Ressource (z. B. einen Mutex) hält. 
+Kritisch wird dies, wenn eine Task mittlerer Priorität (Medium) die Ausführung der niedrigpriorisierten Task unterbricht, da Medium keine Ressourcen mit Low teilt, aber eine höhere Priorität besitzt. Dadurch wird Low suspendiert, kann den Mutex nicht freigeben, und High wird indirekt und unbegrenzt blockiert.
+
+\subsection{Lösung: Priority Inheritance Protocol (PIP)}
+Zur Lösung dieses Problems implementiert DOS das \textit{Priority Inheritance Protocol} (PIP). Sobald eine hochpriorisierte Task an einem gesperrten Mutex blockiert, erbt der aktuelle Besitzer des Mutexes vorübergehend die Priorität der blockierten Task, sofern diese höher ist als seine eigene. Dadurch kann die niedrigpriorisierte Task schnell fertiggestellt werden und wird nicht von mittleren Tasks unterbrochen. Nach Freigabe des Mutexes wird die Priorität wieder zurückgesetzt.
+
+\section{Implementierung der Prioritätsvererbung in DOS}
+Die Vererbung findet in der Funktion \lstinline|Kernel_MutexLock| statt, wenn eine Task blockiert wird:
+
+\begin{lstlisting}[language=C, caption={Vererbungs- und transitive Logik in Kernel\_MutexLock}, label={lst:pip_lock}]
+/* Priority Inheritance: Prioritaet des Mutex-Besitzers anheben */
+TCB_sctTCB_t *pOwner = pMutex->pOwner;
+if (pOwner != NULL)
+{
+    /* Hoehere Prioritaet entspricht einer kleineren Zahl */
+    if (Global_PointerToCurrentlyRunningTCB->u8CurrentPriority < pOwner->u8CurrentPriority)
+    {
+        pOwner->u8CurrentPriority = Global_PointerToCurrentlyRunningTCB->u8CurrentPriority;
+
+        /* Transitive Vererbung: falls der Besitzer selbst blockiert ist */
+        TCB_sctTCB_t *pNextOwner = pOwner;
+        while (pNextOwner->pWaitingObject != NULL)
+        {
+            Kernel_ObjectHeader_t *pNextHeader = (Kernel_ObjectHeader_t *)pNextOwner->pWaitingObject;
+            if (pNextHeader->eObjectType == KernelObjectType_Mutex)
+            {
+                Kernel_Mutex_t *pNextMutex = (Kernel_Mutex_t *)pNextHeader;
+                TCB_sctTCB_t *pOwnerOfNextMutex = pNextMutex->pOwner;
+                if (pOwnerOfNextMutex != NULL && pNextOwner->u8CurrentPriority < pOwnerOfNextMutex->u8CurrentPriority)
+                {
+                    pOwnerOfNextMutex->u8CurrentPriority = pNextOwner->u8CurrentPriority;
+                    pNextOwner = pOwnerOfNextMutex;
+                }
+                else
+                {
+                    break;
+                }
+            }
+            else
+            {
+                break;
+            }
+        }
+    }
+}
+\end{lstlisting}
+
+\subsection{Detaillierte Analyse des Vererbungscodes}
+\begin{itemize}
+    \item \textbf{Zeilen 1--5:} Der Kernel ermittelt den Besitzer des Mutexes (\lstinline|pOwner|). Da eine höhere Priorität in DOS durch eine kleinere Zahl repräsentiert wird (0 = höchste, 255 = niedrigste), prüft die Bedingung in Zeile 5, ob die anfordernde Task (\lstinline|Global_PointerToCurrentlyRunningTCB|) eine höhere Priorität als der Besitzer besitzt.
+    \item \textbf{Zeile 7:} Ist dies der Fall, wird die Priorität des Besitzers (\lstinline|pOwner->u8CurrentPriority|) sofort auf das Niveau der anfordernden Task angehoben.
+    \item \textbf{Zeilen 9--33:} Dies implementiert die \textbf{transitive Vererbung}. Wenn die Task \lstinline|A| auf einen Mutex wartet, der von \lstinline|B| gehalten wird, und \lstinline|B| wiederum auf einen Mutex wartet, der von \lstinline|C| gehalten wird, muss die hohe Priorität von \lstinline|A| über \lstinline|B| hinweg bis zu \lstinline|C| vererbt werden. Die \lstinline|while|-Schleife hangelt sich entlang der Sperrkette (\lstinline|pWaitingObject|) durch alle blockierten Mutex-Besitzer und passt deren Prioritäten entsprechend an.
+\end{itemize}
+
+\section{Prioritätswiederherstellung beim Entsperren}
+Wird ein Mutex freigegeben, darf die Priorität des Besitzers nicht blind auf seine Basis-Priorität (\lstinline|u8BasePriority|) zurückgesetzt werden, falls dieser noch andere Mutexes hält, auf die andere hochpriorisierte Tasks warten. Die Priorität muss stattdessen dynamisch neu berechnet werden.
+
+Der Code in \lstinline|Kernel_MutexUnlock| sieht wie folgt aus:
+
+\begin{lstlisting}[language=C, caption={Wiederherstellung der Prioritaet in Kernel\_MutexUnlock}, label={lst:pip_unlock}]
+/* Prioritaetsvererbung aufheben: Prioritaet neu berechnen */
+uint8_t u8NewPriority = pOwner->u8BasePriority;
+for (uint8_t i = 0; i < Global_TotalNumberOfCreatedTasks; i++)
+{
+    if (Global_ArrayOfAllTCBs[i].eTaskState == TaskState_Blocked &&
+        Global_ArrayOfAllTCBs[i].pWaitingObject != NULL)
+    {
+        Kernel_ObjectHeader_t *pHeader = (Kernel_ObjectHeader_t *)Global_ArrayOfAllTCBs[i].pWaitingObject;
+        if (pHeader->eObjectType == KernelObjectType_Mutex)
+        {
+            Kernel_Mutex_t *pWmutex = (Kernel_Mutex_t *)pHeader;
+            /* Wenn diese Task auf einen Mutex wartet, den der Besitzer haelt */
+            if (pWmutex->pOwner == pOwner)
+            {
+                if (Global_ArrayOfAllTCBs[i].u8CurrentPriority < u8NewPriority)
+                {
+                    u8NewPriority = Global_ArrayOfAllTCBs[i].u8CurrentPriority;
+                }
+            }
+        }
+    }
+}
+pOwner->u8CurrentPriority = u8NewPriority;
+\end{lstlisting}
+
+\subsection{Detaillierte Analyse des Entsperrcodes}
+\begin{itemize}
+    \item \textbf{Zeile 2:} Beginnt die Berechnung mit der ursprünglichen statischen Priorität (\lstinline|u8BasePriority|) der Task als Standardannahme.
+    \item \textbf{Zeilen 3--22:} Durchläuft alle Tasks im System. Der Kernel filtert diejenigen Tasks heraus, die blockiert sind (Zeile 5) und auf ein Synchronisationsobjekt warten.
+    \item \textbf{Zeilen 8--14:} Falls dieses Objekt ein Mutex ist (\lstinline|KernelObjectType_Mutex|) und der Besitzer dieses Mutexes genau die freigebende Task ist (\lstinline|pWmutex->pOwner == pOwner|), bedeutet dies, dass diese wartende Task immer noch von der freigebenden Task blockiert wird (über einen \textit{anderen} Mutex).
+    \item \textbf{Zeilen 16--19:} Die Priorität der freigebenden Task wird auf die höchste Priorität aller Tasks angehoben, die noch auf andere von ihr gehaltene Mutexes warten.
+    \item \textbf{Zeile 24:} Setzt die neu berechnete Priorität in den TCB ein.
+\end{itemize}
+
+\section{Verständnis- und Kontrollfragen}
+\begin{enumerate}
+    \item \textbf{Frage:} Was versteht man unter transitiver Prioritätsvererbung und in welcher Situation tritt sie auf?
+    
+    \textit{Antwort:} Transitive Prioritätsvererbung liegt vor, wenn sich die Vererbung über eine Kette von Abhängigkeiten fortpflanzt. Beispiel: Task \lstinline|High| (Prio 1) fordert Mutex \lstinline|X| an, der von Task \lstinline|Medium| (Prio 2) gehalten wird. Task \lstinline|Medium| wartet jedoch selbst auf Mutex \lstinline|Y|, der von Task \lstinline|Low| (Prio 3) gehalten wird. Ohne transitive Vererbung würde \lstinline|Medium| zwar die Priorität 1 erben, aber \lstinline|Low| bliebe bei Priorität 3. \lstinline|Medium| bliebe blockiert, und somit auch \lstinline|High|. Bei transitiver Vererbung erbt \lstinline|Medium| die Priorität 1 von \lstinline|High| und vererbt diese sofort an \lstinline|Low| weiter, sodass \lstinline|Low| mit Priorität 1 läuft, den Mutex \lstinline|Y| freigibt und die Sperrkette auflöst.
+    
+    \item \textbf{Frage:} Warum kann die Priorität einer Task beim Freigeben eines Mutexes nicht einfach direkt auf ihre Basispriorität (\lstinline|u8BasePriority|) zurückgesetzt werden?
+    
+    \textit{Antwort:} Weil eine Task mehrere Mutexes gleichzeitig halten kann. Angenommen, Task \lstinline|Low| (Basis-Prio 3) hält die Mutexes \lstinline|M1| und \lstinline|M2|. Task \lstinline|High1| (Prio 1) wartet auf \lstinline|M1|, Task \lstinline|High2| (Prio 2) wartet auf \lstinline|M2|. Die aktuelle Priorität von \lstinline|Low| ist 1. Gibt \lstinline|Low| nun \lstinline|M1| frei, darf ihre Priorität nicht auf 3 zurückgesetzt werden, da sie immer noch \lstinline|M2| hält, auf den \lstinline|High2| (Prio 2) wartet. Die korrekte neue Priorität für \lstinline|Low| nach der Freigabe von \lstinline|M1| ist daher 2. Erst wenn sie auch \lstinline|M2| freigibt, fällt sie auf ihre Basispriorität 3 zurück.
+\end{enumerate}

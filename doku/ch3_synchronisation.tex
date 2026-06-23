@@ -1,0 +1,145 @@
+\chapter{Synchronisationsmechanismen}
+\label{ch:synchronisation}
+
+\section{Zählemphasierte Semaphoren}
+Zählsemaphoren (Counting Semaphores) dienen der Verwaltung von geteilten Ressourcen mit mehrfacher Verfügbarkeit oder zur Signalisierung zwischen Tasks. Ein Semaphor besitzt keinen festen Besitzer (Ownership).
+
+Die Datenstruktur in \lstinline|kernel.h| ist wie folgt definiert:
+\begin{lstlisting}[language=C, caption={Struktur von Semaphoren in kernel.h}, label={lst:sem_struct}]
+typedef struct
+{
+    KernelObjectType_t eObjectType; /* Muss das erste Element sein! */
+    uint32_t u32Count;         /* Aktuelle Anzahl der verfuegbaren Jetons */
+    uint32_t u32MaxCount;      /* Maximale Kapazitaet */
+} Kernel_Semaphore_t;
+\end{lstlisting}
+
+\subsection{Wait- und Give-Funktionen}
+Wenn eine Task versucht, ein Semaphor mit \lstinline|Kernel_SemaphoreWait| zu sperren, und kein Jeton verfügbar ist (\lstinline|u32Count == 0|), blockiert sie sich selbst:
+
+\begin{lstlisting}[language=C, caption={Semaphor Wait-Implementierung in kernel.c}, label={lst:sem_wait}]
+void Kernel_SemaphoreWait(Kernel_Semaphore_t *pSemaphore)
+{
+    __disable_irq(); // Kritischer Abschnitt
+
+    if (pSemaphore != NULL)
+    {
+        if (pSemaphore->u32Count > 0)
+        {
+            pSemaphore->u32Count--; // Jeton entnehmen
+        }
+        else
+        {
+            // Blockieren
+            if (Global_PointerToCurrentlyRunningTCB != NULL)
+            {
+                Global_PointerToCurrentlyRunningTCB->pWaitingObject = (void*)pSemaphore;
+                Global_PointerToCurrentlyRunningTCB->eTaskState = TaskState_Blocked;
+                Kernel_RequestContextSwitch(); // Kontextwechsel anfordern
+            }
+        }
+    }
+
+    __enable_irq();
+}
+\end{lstlisting}
+
+Gibt eine Task ein Semaphor mit \lstinline|Kernel_SemaphoreGive| frei, erhöht sich die Zähleranzahl, und blockierte Tasks werden geweckt:
+
+\begin{lstlisting}[language=C, caption={Semaphor Give-Implementierung in kernel.c}, label={lst:sem_give}]
+void Kernel_SemaphoreGive(Kernel_Semaphore_t *pSemaphore)
+{
+    __disable_irq(); // Kritischer Abschnitt
+
+    if (pSemaphore != NULL)
+    {
+        if (pSemaphore->u32Count < pSemaphore->u32MaxCount)
+        {
+            pSemaphore->u32Count++;
+        }
+
+        // Wartende Task mit Prioritaet aufwecken
+        for (uint8_t i = 0; i < Global_TotalNumberOfCreatedTasks; i++)
+        {
+            if (Global_ArrayOfAllTCBs[i].eTaskState == TaskState_Blocked &&
+                Global_ArrayOfAllTCBs[i].pWaitingObject == (void*)pSemaphore)
+            {
+                Global_ArrayOfAllTCBs[i].eTaskState = TaskState_Ready;
+                Global_ArrayOfAllTCBs[i].pWaitingObject = NULL;
+                Kernel_RequestContextSwitch();
+                break; // Nur eine Task aufwecken
+            }
+        }
+    }
+
+    __enable_irq();
+}
+\end{lstlisting}
+
+\subsection{Detaillierte Analyse}
+\begin{itemize}
+    \item \textbf{\lstinline|pWaitingObject| (lst:sem_wait Zeile 15):} Durch Zuweisung des Semaphors an das \lstinline|pWaitingObject| der aktuellen Task weiß der Kernel genau, warum diese Task blockiert ist. Sie wird erst aufgeweckt, wenn genau dieses Semaphor signalisiert wird.
+    \item \textbf{Interrupt-Sperre (lst:sem_wait Zeile 3):} Die Deaktivierung der Interrupts stellt sicher, dass der Abfrage- und Dekrementierungsvorgang (\lstinline|u32Count--|) atomar abläuft. Ohne diese Sperre könnte ein SysTick-Interrupt genau zwischen Abfrage und Dekrementierung stattfinden und zu einer Inkonsistenz führen (Race Condition).
+\end{itemize}
+
+\section{Mutexes (gegenseitiger Ausschluss)}
+Mutexes (Mutual Exclusion) dienen dem Schutz kritischer Abschnitte, auf die nur eine Task gleichzeitig zugreifen darf. Im Gegensatz zu Semaphoren besitzen Mutexes das Konzept des \textbf{Besitzers} (Ownership). Nur diejenige Task, die den Mutex gesperrt hat, darf ihn auch wieder entsperren.
+
+Die Datenstruktur in \lstinline|kernel.h|:
+\begin{lstlisting}[language=C, caption={Struktur von Mutexes in kernel.h}, label={lst:mutex_struct}]
+typedef struct
+{
+    KernelObjectType_t eObjectType; /* Muss das erste Element sein! */
+    TCB_sctTCB_t *pOwner;      /* Zeiger auf die Task, die den Mutex haelt */
+    uint8_t u8IsLocked;        /* Sperrzustand: 1 = gesperrt, 0 = frei */
+} Kernel_Mutex_t;
+\end{lstlisting}
+
+\subsection{Vergleich von Mutex und Semaphor}
+\begin{table}[h]
+\centering
+\begin{tabularx}{\textwidth}{lXX}
+\toprule
+\textbf{Eigenschaft} & \textbf{Mutex} & \textbf{Semaphor} \\
+\midrule
+\textbf{Besitzkonzept} & Ja (\lstinline|pOwner| zeigt auf sperrende Task) & Nein (Jede Task kann Give aufrufen) \\
+\textbf{Maximalwert} & Immer 1 (Binär) & Konfigurierbar (\lstinline|u32MaxCount|) \\
+\textbf{Prioritätsvererbung} & Ja (PIP implementiert) & Nein \\
+\textbf{Hauptanwendungsfall} & Schutz gemeinsam genutzter Hardware/Daten & Signalisierung und Ablaufsteuerung \\
+\bottomrule
+\end{tabularx}
+\caption{Gegenüberstellung von Mutex und Semaphor}
+\label{tab:mutex_vs_semaphore}
+\end{table}
+
+In \lstinline|Kernel_MutexUnlock| wird die Ownership explizit validiert:
+\begin{lstlisting}[language=C, caption={Auszug der Ownership-Prüfung in Kernel\_MutexUnlock}, label={lst:mutex_owner_check}]
+void Kernel_MutexUnlock(Kernel_Mutex_t *pMutex)
+{
+    __disable_irq();
+
+    if (pMutex != NULL)
+    {
+        /* Nur der Besitzer darf freigeben! */
+        if (pMutex->pOwner == Global_PointerToCurrentlyRunningTCB)
+        {
+            pMutex->u8IsLocked = 0;
+            pMutex->pOwner = NULL;
+            
+            // ... Aufwecken der wartenden Task ...
+        }
+    }
+    __enable_irq();
+}
+\end{lstlisting}
+
+\section{Verständnis- und Kontrollfragen}
+\begin{enumerate}
+    \item \textbf{Frage:} Warum ist es zwingend notwendig, während der Operationen \lstinline|Wait| und \lstinline|Give| die Interrupts zu sperren?
+    
+    \textit{Antwort:} Die Überprüfung des Zählerstandes eines Semaphors oder des Sperrzustands eines Mutex und das anschließende Ändern dieser Werte (Dekrementieren/Inkrementieren/Zuweisen) sind zusammengesetzte Lese-Schreib-Operationen (Read-Modify-Write). Wenn während dieses Vorgangs ein Interrupt (z. B. der SysTick-Scheduler) dazwischenfunkt, könnte eine andere Task dieselbe Ressource manipulieren. Dies führt zu Race Conditions, bei denen beispielsweise ein Jeton doppelt vergeben wird oder Tasks blockiert bleiben, obwohl Ressourcen frei sind. Das Sperren der Interrupts garantiert atomaren (ununterbrechbaren) Zugriff auf die Kernel-Zustände.
+    
+    \item \textbf{Frage:} Was passiert, wenn eine Task \lstinline|A| versucht, einen Mutex freizugeben, den sie nicht gesperrt hat (sondern Task \lstinline|B|)?
+    
+    \textit{Antwort:} Wegen der expliziten Ownership-Prüfung in der Funktion \lstinline|Kernel_MutexUnlock| (Zeile 6 in Auflistung~\ref{lst:mutex_owner_check}) schlägt dieser Versuch fehl. Die Bedingung \lstinline|pMutex->pOwner == Global_PointerToCurrentlyRunningTCB| ist falsch. Die Funktion verlässt den kritischen Abschnitt unverrichteter Dinge. Der Mutex bleibt gesperrt, und die rechtmäßige Besitzer-Task \lstinline|B| behält die Kontrolle. Bei einer Semophore hingegen gäbe es keine solche Prüfung; jede Task könnte das Semaphor fälschlicherweise freigeben, was die Synchronisationslogik zerstören würde.
+\end{enumerate}

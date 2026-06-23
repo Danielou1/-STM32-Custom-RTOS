@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "kernel.h"
+#include "SEGGER_SYSVIEW.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -171,12 +172,13 @@ void DebugMon_Handler(void)
 void SysTick_Handler(void)
 {
   /* USER CODE BEGIN SysTick_IRQn 0 */
+  SEGGER_SYSVIEW_RecordEnterISR();
   Kernel_UpdateTimers();
   Kernel_RequestContextSwitch();
   /* USER CODE END SysTick_IRQn 0 */
   HAL_IncTick();
   /* USER CODE BEGIN SysTick_IRQn 1 */
-
+  SEGGER_SYSVIEW_RecordExitISR();
   /* USER CODE END SysTick_IRQn 1 */
 }
 

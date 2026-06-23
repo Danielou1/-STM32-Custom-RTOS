@@ -1,0 +1,65 @@
+# ==========================================
+# TeSSLa Laufzeit-Spezifikation für DOS (Danielou OS)
+# Master-Projektseminar: Echtzeitsysteme (SS26)
+# Autor: Danielou Mounsande (THM)
+# ==========================================
+
+# --- Eingangs-Datenströme (Input Events) ---
+# Diese Ströme werden vom STM32 via Trace-Ausgabe (USART/RTT) bereitgestellt.
+
+# Stream der aktiven Task-ID bei jedem Kontextwechsel.
+# Format der Logzeile: "zeit: active_task = id"
+in active_task: Events[Int]
+
+# Stream des Zustandswechsels einer Task (z.B. 1 = Ready, 2 = Running, 3 = Blocked)
+# Format der Logzeile: "zeit: task_state_change = (task_id, state)"
+in task_state: Events[Int]    # Task ID
+in state_val: Events[Int]     # Neuer Zustand (1=Ready, 2=Running, 3=Blocked)
+
+# Stream der Mutex-Aktionen (Sperren = 1, Freigeben = 0)
+# Format der Logzeile: "zeit: mutex_event = (task_id, mutex_id, action)"
+in mutex_id: Events[Int]      # Mutex ID
+in mutex_task: Events[Int]    # Task ID
+in mutex_action: Events[Int]  # 1 = Lock, 0 = Unlock
+
+# --- Eigenschaft 1: Gegenseitiger Ausschluss (Mutual Exclusion) ---
+# Ziel: Es darf sich niemals mehr als eine Task gleichzeitig im kritischen Abschnitt des gleichen Mutex befinden.
+
+# Verfolgen, welche Task den Mutex hält.
+def current_mutex_owner = if mutex_action == 1 then mutex_task else 0
+
+# Signalisiert einen Fehler, wenn eine Task versucht, einen gesperrten Mutex zu sperren (Doppelbelegung)
+def mutex_error = mutex_action == 1 && last(current_mutex_owner, mutex_action) != 0
+
+out mutex_error # Ausgabe bei Verletzung der Mutual Exclusion
+
+
+# --- Eigenschaft 2: Maximale Antwortzeit (Deadline/Response Time) ---
+# Ziel: Eine hochpriorisierte Task (Task ID = 1) muss innerhalb von 15 Millisekunden nach dem Wechsel in "Ready" ausgeführt werden.
+
+# Filtert den Zeitpunkt, an dem Task 1 in den Ready-State (Zustand 1) wechselt
+def task1_ready = task_state == 1 && state_val == 1
+
+# Filtert den Zeitpunkt, an dem Task 1 das nächste Mal läuft (Running-State 2)
+def task1_running = task_state == 1 && state_val == 2
+
+# Berechnet die Zeitspanne zwischen Ready und Running
+def task1_response_time = time(task1_running) - time(task1_ready)
+
+# Generiert einen Alarmstrom, wenn die Antwortzeit 15 ms überschreitet
+def deadline_violation = task1_response_time > 15
+
+out deadline_violation # Ausgabe bei Verletzung der Deadline-Schranke
+
+
+# --- Eigenschaft 3: Prioritätsinversion (Priority Inversion Prevention) ---
+# Ziel: Wenn Task 1 (High) blockiert ist, weil Task 3 (Low) einen gemeinsamen Mutex hält,
+# darf Task 2 (Medium) nicht vor Task 3 ausgeführt werden (Nachweis der Funktion von PIP).
+
+# Task 1 ist blockiert auf Mutex (Zustand 3)
+def task1_blocked = task_state == 1 && state_val == 3
+
+# Prüft, ob Task 2 (Medium) ausgeführt wird, während Task 1 blockiert ist
+def medium_running_during_inversion = active_task == 2 && task1_blocked
+
+out medium_running_during_inversion # Signalisiert, ob PIP versagt hat (unbeschränkte Inversion)

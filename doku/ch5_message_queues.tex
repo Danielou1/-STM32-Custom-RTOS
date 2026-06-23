@@ -1,0 +1,121 @@
+\chapter{Nachrichten-Warteschlangen (Message Queues)}
+\label{ch:message_queues}
+
+\section{Struktur und Ringpuffer-Konzept}
+Message Queues ermöglichen den sicheren und synchronisierten Austausch von Daten (Nachrichten) zwischen Tasks. Sie sind als Ringpuffer implementiert, um einen kontinuierlichen Datenstrom ohne teure Speicherverschiebungen zu ermöglichen. Die Nachrichten selbst sind 32-Bit-Werte, was die direkte Übertragung von Ganzzahlen oder Zeigern (Pointer auf größere Datenstrukturen) erlaubt.
+
+Die Struktur in \lstinline|kernel.h| ist wie folgt definiert:
+\begin{lstlisting}[language=C, caption={Struktur von Message Queues in kernel.h}, label={lst:queue_struct}]
+#define KERNEL_QUEUE_MAX_SIZE                             ( 16u )
+
+typedef struct
+{
+    KernelObjectType_t eObjectType;                /* Muss das erste Element sein! */
+    uint32_t au32Buffer[KERNEL_QUEUE_MAX_SIZE];    /* Ringpuffer fuer Nachrichten */
+    uint8_t u8Head;                                /* Schreib-Index */
+    uint8_t u8Tail;                                /* Lese-Index */
+    uint8_t u8Count;                               /* Aktuelle Anzahl der Nachrichten */
+    uint8_t u8Size;                                /* Maximale Kapazitaet */
+} Kernel_Queue_t;
+\end{lstlisting}
+
+\subsection{Detaillierte Feldbeschreibung}
+\begin{itemize}
+    \item \textbf{\lstinline|au32Buffer| (Zeile 6):} Das statische Array zur Aufnahme der Nachrichtenwerte. Die maximale Puffergröße ist systemweit auf 16 Elemente begrenzt.
+    \item \textbf{\lstinline|u8Head| (Zeile 7):} Der Schreib-Index. Zeigt auf die Position, an der die nächste gesendete Nachricht abgelegt wird.
+    \item \textbf{\lstinline|u8Tail| (Zeile 8):} Der Lese-Index. Zeigt auf die Position, an der die älteste noch nicht gelesene Nachricht liegt.
+    \item \textbf{\lstinline|u8Count| (Zeile 9):} Die aktuelle Anzahl der belegten Elemente im Puffer. Dient zur einfachen Überprüfung von \lstinline|isEmpty| und \lstinline|isFull|.
+    \item \textbf{\lstinline|u8Size| (Zeile 10):} Die tatsächliche nutzbare Größe der Queue, die bei der Initialisierung via \lstinline|Kernel_QueueInit| festgelegt wird.
+\end{itemize}
+
+\section{Senden und Empfangen von Nachrichten}
+DOS bietet sowohl blockierende als auch nicht-blockierende Aufrufe für den Queue-Zugriff an. Das Verhalten wird über den Parameter \lstinline|u8Blocking| gesteuert.
+
+\subsection{Sende-Implementierung}
+\begin{lstlisting}[language=C, caption={Implementierung von Kernel\_QueueSend in kernel.c}, label={lst:queue_send}]
+Kernel_ErrorStatus_Enumeration_t Kernel_QueueSend(Kernel_Queue_t *pQueue, uint32_t u32Message, uint8_t u8Blocking)
+{
+    if (pQueue == NULL) return KernelError_InvalidParameterProvided;
+
+    while (1)
+    {
+        __disable_irq();
+
+        if (pQueue->u8Count < pQueue->u8Size)
+        {
+            /* Platz frei: in den Ringpuffer schreiben */
+            pQueue->au32Buffer[pQueue->u8Head] = u32Message;
+            pQueue->u8Head = (pQueue->u8Head + 1) % pQueue->u8Size;
+            pQueue->u8Count++;
+
+            /* Eine wartende Task (die auf Daten wartet) aufwecken */
+            TCB_sctTCB_t *pTaskToWake = NULL;
+            uint8_t u8HighestWaitingPrio = 255;
+            for (uint8_t i = 0; i < Global_TotalNumberOfCreatedTasks; i++)
+            {
+                if (Global_ArrayOfAllTCBs[i].eTaskState == TaskState_Blocked &&
+                    Global_ArrayOfAllTCBs[i].pWaitingObject == (void*)pQueue)
+                {
+                    if (Global_ArrayOfAllTCBs[i].u8CurrentPriority < u8HighestWaitingPrio)
+                    {
+                        u8HighestWaitingPrio = Global_ArrayOfAllTCBs[i].u8CurrentPriority;
+                        pTaskToWake = &Global_ArrayOfAllTCBs[i];
+                    }
+                }
+            }
+
+            if (pTaskToWake != NULL)
+            {
+                pTaskToWake->eTaskState = TaskState_Ready;
+                pTaskToWake->pWaitingObject = NULL;
+                Kernel_RequestContextSwitch();
+            }
+
+            __enable_irq();
+            return KernelError_NoErrorMessage;
+        }
+        else
+        {
+            /* Puffer voll */
+            if (u8Blocking == 0)
+            {
+                __enable_irq();
+                return KernelError_QueueFull;
+            }
+            else
+            {
+                /* Blockieren: in Blocked-State setzen */
+                if (Global_PointerToCurrentlyRunningTCB != NULL)
+                {
+                    Global_PointerToCurrentlyRunningTCB->pWaitingObject = (void*)pQueue;
+                    Global_PointerToCurrentlyRunningTCB->eTaskState = TaskState_Blocked;
+                    Kernel_RequestContextSwitch();
+                }
+            }
+        }
+        __enable_irq();
+    }
+}
+\end{lstlisting}
+
+\subsection{Detaillierte Code-Analyse für das Senden}
+\begin{itemize}
+    \item \textbf{Zeile 12:} Wenn der Puffer Platz hat (\lstinline|u8Count < u8Size|), wird das Element am aktuellen Index \lstinline|u8Head| abgelegt.
+    \item \textbf{Zeile 13:} Berechnet den nächsten Schreib-Index modulo der Queue-Größe, wodurch das Ring-Verhalten zustande kommt.
+    \item \textbf{Zeilen 17--36:} Nachdem Daten eingefügt wurden, sucht der Kernel nach einer blockierten Task, die auf diese Queue wartet (ein wartender Consumer), und weckt diejenige mit der höchsten Priorität auf.
+    \item \textbf{Zeilen 48--65:} Ist die Queue voll und \lstinline|u8Blocking| ist 0, kehrt die Funktion sofort mit dem Fehler \lstinline|KernelError_QueueFull| zurück. Ist \lstinline|u8Blocking| ungleich 0, markiert sich die aktuelle Task als blockiert auf die Queue und löst einen Kontextwechsel aus. Nach dem erneuten Aufwecken startet die \lstinline|while(1)|-Schleife von vorn und prüft die Bedingung erneut.
+\end{itemize}
+
+\subsection{Empfangs-Implementierung}
+Der Empfang über \lstinline|Kernel_QueueReceive| folgt einer analogen Logik: Ist die Queue leer, blockiert der Empfänger (falls blockierend konfiguriert). Werden Daten entnommen, wird eine blockierte Producer-Task geweckt, die darauf wartet, neue Daten in die Queue schreiben zu können.
+
+\section{Verständnis- und Kontrollfragen}
+\begin{enumerate}
+    \item \textbf{Frage:} Warum ist das Aufwachen blockierter Tasks in einer Schleife (\lstinline|while(1)|) gekapselt, anstatt die Bedingung mit einem einfachen \lstinline|if| abzuprüfen?
+    
+    \textit{Antwort:} Dies schützt vor sogenannten \textbf{Spurious Wakeups} (unerwartetes Aufwecken) und Race Conditions. Angenommen, Task \lstinline|Consumer1| (Prio 1) und Task \lstinline|Consumer2| (Prio 2) sind beide blockiert, weil die Queue leer ist. Sobald ein Producer ein Element sendet, wird \lstinline|Consumer1| aufgeweckt. Bevor \lstinline|Consumer1| jedoch ausgeführt wird, könnte eine andere Interrupt-gesteuerte Routine oder eine hochpriorisierte Task dazwischenkommen und das Element wegschnappen. Wenn \lstinline|Consumer1| schließlich läuft, ist die Queue wieder leer. Durch die \lstinline|while(1)|-Schleife prüft die Task die Bedingung nach dem Aufwachen erneut. Ist die Queue wieder leer, legt sie sich sicher wieder schlafen, anstatt einen ungültigen Lesezugriff durchzuführen.
+    
+    \item \textbf{Frage:} Warum können wir eine beliebige Task, die auf die Queue blockiert ist, aufwecken, ohne explizit zu prüfen, ob es sich um einen Producer oder Consumer handelt?
+    
+    \textit{Antwort:} Da sowohl schreibende Tasks (Producer) als auch lesende Tasks (Consumer) ihr Feld \lstinline|pWaitingObject| auf dieselbe Queue-Adresse setzen, sucht die Aufweck-Schleife einfach nach irgendeiner Task, die an diesem Objekt blockiert ist. Das ist absolut korrekt und sicher, da jede aufgeweckte Task nach dem Kontextwechsel wieder an den Anfang ihrer jeweiligen \lstinline|while(1)|-Schleife springt. Ein irrtümlich aufgeweckter Producer stellt fest, dass die Queue immer noch voll ist, und blockiert sich sofort wieder. Ein aufgeweckter Consumer stellt fest, dass Daten vorhanden sind, verarbeitet sie und beendet den Aufruf erfolgreich. Dieser Ansatz vereinfacht die Kernel-Logik erheblich, da keine getrennten Warteschlangen für Producer und Consumer verwaltet werden müssen.
+\end{enumerate}

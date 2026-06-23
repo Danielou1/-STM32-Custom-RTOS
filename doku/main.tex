@@ -1,0 +1,117 @@
+\documentclass[12pt,a4paper,oneside]{report}
+\usepackage[utf8]{inputenc}
+\usepackage[ngerman]{babel}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\geometry{
+    a4paper,
+    total={160mm,247mm},
+    left=25mm,
+    top=25mm,
+}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{titlesec}
+
+% Farbschema für Code-Syntax-Highlighting
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.96,0.96,0.96}
+\definecolor{darkblue}{rgb}{0.0,0.0,0.55}
+
+% Konfiguration von Listings für C-Code
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=4,
+    language=C,
+    extendedchars=true,
+    literate={ü}{{\"u}}1 {ä}{{\"a}}1 {ö}{{\"o}}1 {ß}{{\ss}}1
+}
+\lstset{style=mystyle}
+
+% Hyperref Setup
+\hypersetup{
+    colorlinks=true,
+    linkcolor=darkblue,
+    filecolor=magenta,      
+    urlcolor=blue,
+    pdftitle={DOS Modulhandbuch: Custom RTOS},
+    pdfauthor={Danielou Mounsande},
+}
+
+% Kopf- und Fußzeilen Konfiguration
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\slshape \leftmark}
+\fancyhead[R]{\slshape Danielou OS (DOS)}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\titleformat{\chapter}[display]
+  {\normalfont\bfseries\color{darkblue}}
+  {\chaptertitlename\ \thechapter}{10pt}{\Huge}
+
+\begin{document}
+
+% --- TITELBLATT ---
+\begin{titlepage}
+    \centering
+    \vspace*{1.5cm}
+    {\Huge\bfseries Danielou OS (DOS)\par}
+    \vspace{0.5cm}
+    {\Large\itshape Modulhandbuch \& Technische Referenz\par}
+    \vspace{1.5cm}
+    {\large\bfseries Master-Projektseminar: Echtzeitsysteme (SS26)\par}
+    \vspace{0.2cm}
+    {Fachbereich MNI -- Technische Hochschule Mittelhessen (THM)\par}
+    \vspace{2.5cm}
+    \includegraphics[width=0.3\textwidth]{../thm_mni_logo.png}\par
+    \vspace{2.5cm}
+    {\large\bfseries Autor: Danielou Mounsande\par}
+    \vspace{0.5cm}
+    {\large Datum: \today\par}
+    \vfill
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% --- KAPITEL DATEIEN EINBINDEN ---
+\input{ch1_einfuehrung}
+\newpage
+\input{ch2_scheduler}
+\newpage
+\input{ch3_synchronisation}
+\newpage
+\input{ch4_prioritaetsvererbung}
+\newpage
+\input{ch5_message_queues}
+\newpage
+\input{ch6_debugging_tests}
+\newpage
+\input{ch7_verifikation}
+
+\end{document}

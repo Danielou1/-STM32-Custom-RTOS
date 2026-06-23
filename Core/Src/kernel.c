@@ -9,6 +9,7 @@
 #include <string.h>
 #include "main.h"
 #include "tcb.h"
+#include "SEGGER_SYSVIEW.h"
 
 /* --- Abschnitt 1: Hardware-Definitionen (Cortex-M4) --- */
 
@@ -30,6 +31,25 @@ TCB_sctTCB_t * volatile Global_PointerToCurrentlyRunningTCB = NULL;
 
 
 /* --- Abschnitt 3: Interne Funktionen und Hooks --- */
+
+/* Weak declarations of the test tasks to avoid linker errors if they are not defined in the current test mode */
+__attribute__((weak)) void TaskLow(void) {}
+__attribute__((weak)) void TaskMedium(void) {}
+__attribute__((weak)) void TaskHigh(void) {}
+__attribute__((weak)) void TaskProducer(void) {}
+__attribute__((weak)) void TaskConsumer(void) {}
+
+static void Kernel_IdleTask(void);
+
+static const char* GetTaskName(Kernel_TaskEntryPointFunctionPointer_t fp) {
+    if (fp == Kernel_IdleTask) return "Idle";
+    if ((void*)fp == (void*)TaskLow) return "TaskLow";
+    if ((void*)fp == (void*)TaskMedium) return "TaskMedium";
+    if ((void*)fp == (void*)TaskHigh) return "TaskHigh";
+    if ((void*)fp == (void*)TaskProducer) return "Producer";
+    if ((void*)fp == (void*)TaskConsumer) return "Consumer";
+    return "Unknown Task";
+}
 
 /* Sicherheitsnetz: Wenn ein Task versucht ein "return" auszuführen oder beendet wird,
  * landet er hier, anstatt einen HardFault bei Adresse 0x00000000 auszulösen.
@@ -61,6 +81,7 @@ uint32_t Kernel_ContextSwitch(uint32_t current_sp)
     /* 1. Sichert den SP des ausgehenden Tasks */
     if (Global_PointerToCurrentlyRunningTCB != NULL)
     {
+        SEGGER_SYSVIEW_OnTaskStopReady((uint32_t)Global_PointerToCurrentlyRunningTCB, 0);
         Global_PointerToCurrentlyRunningTCB->u32TaskSP = current_sp;
         
         /* Wenn die Task nicht blockiert ist, setzen wir sie zurück auf Ready */
@@ -101,6 +122,8 @@ uint32_t Kernel_ContextSwitch(uint32_t current_sp)
     Global_PointerToCurrentlyRunningTCB = &Global_ArrayOfAllTCBs[Global_IndexDerAktuellenTask];
     Global_PointerToCurrentlyRunningTCB->eTaskState = TaskState_Running;
 
+    SEGGER_SYSVIEW_OnTaskStartExec((uint32_t)Global_PointerToCurrentlyRunningTCB);
+
     /* 4. Gibt den exakten Stack-Pointer zurück */
     return Global_PointerToCurrentlyRunningTCB->u32TaskSP;
 }
@@ -116,6 +139,9 @@ void Kernel_InitializeHardwareAndTCBStructures(void)
     /* Priorität von PendSV auf den niedrigstmöglichen Wert setzen */
     volatile uint8_t *shpr3 = (volatile uint8_t *)SYSTEM_HANDLER_PRIORITY_REGISTER_3_ADDRESS;
     *shpr3 = PENDSV_PRIORITY_LOWEST;
+
+    // Initialize SEGGER SystemView
+    SEGGER_SYSVIEW_Conf();
 
     memset(Global_ArrayOfAllTCBs, 0, sizeof(Global_ArrayOfAllTCBs));
     Global_TotalNumberOfCreatedTasks = 0;
@@ -171,6 +197,19 @@ Kernel_ErrorStatus_Enumeration_t Kernel_CreateNewTask(Kernel_TaskEntryPointFunct
     pTCB->u32TaskSP = (uint32_t)sp;
 
     Global_TotalNumberOfCreatedTasks++;
+
+    // Register task in SEGGER SystemView
+    SEGGER_SYSVIEW_OnTaskCreate((uint32_t)pTCB);
+    {
+        SEGGER_SYSVIEW_TASKINFO info;
+        memset(&info, 0, sizeof(info));
+        info.TaskID = (uint32_t)pTCB;
+        info.sName = GetTaskName(taskFunctionPointer);
+        info.Prio = pTCB->u8BasePriority;
+        info.StackBase = (uint32_t)pTCB->au32TaskStack;
+        info.StackSize = sizeof(pTCB->au32TaskStack);
+        SEGGER_SYSVIEW_SendTaskInfo(&info);
+    }
 
     return KernelError_NoErrorMessage;
 }

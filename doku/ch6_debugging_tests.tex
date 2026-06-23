@@ -1,0 +1,102 @@
+\chapter{Debugging und Test-Verifikation}
+\label{ch:debugging_tests}
+
+\section{Printf-Umleitung auf die serielle Schnittstelle}
+Beim Debugging auf Mikrocontrollern ist eine Textausgabe über eine serielle Schnittstelle (UART) eines der wichtigsten Hilfsmittel. In DOS wird die Standard-C-Bibliotheksfunktion \lstinline|printf| auf den \textbf{USART1} des STM32L475-Chips umgeleitet. Dieser ist intern direkt mit dem virtuellen COM-Port (VCP) des ST-Link-Debuggers verbunden und kann am PC über Terminalprogramme wie PuTTY auf COM16 ausgelesen werden.
+
+\subsection{UART-Sende-Hook}
+Hierzu wird die compiler-spezifische Funktion \lstinline|__io_putchar| in \lstinline|main.c| überschrieben:
+
+\begin{lstlisting}[language=C, caption={Umleitung von stdout auf USART1 in main.c}, label={lst:printf_redirect}]
+#ifdef __GNUC__
+#define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
+#else
+#define PUTCHAR_PROTOTYPE int fputc(int ch, FILE *f)
+#endif
+
+PUTCHAR_PROTOTYPE
+{
+  HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
+  return ch;
+}
+\end{lstlisting}
+
+\subsection{Deaktivierung der stdout-Pufferung}
+Standardmäßig puffert die C-Laufzeitbibliothek \textit{Newlib-nano} (für GCC ARM Embedded) Ausgaben auf \lstinline|stdout|. Das bedeutet, dass Zeichen erst übertragen werden, wenn der Puffer voll ist oder ein Newline (\lstinline|\n|) erkannt wird. In einem RTOS kann dies dazu führen, dass Nachrichten im RAM verbleiben und die Konsole leer bleibt.
+Um dies zu verhindern, wird die Pufferung in \lstinline|main.c| direkt nach der Hardware-Initialisierung vollständig abgeschaltet:
+
+\begin{lstlisting}[language=C, caption={Deaktivierung der stdout-Pufferung}, label={lst:setvbuf}]
+int main(void)
+{
+  HAL_Init();
+  SystemClock_Config();
+  MX_GPIO_Init();
+  MX_USART1_UART_Init();
+  
+  // RTOS-Initialisierung
+  Kernel_InitializeHardwareAndTCBStructures();
+
+  /* stdout-Pufferung komplett deaktivieren */
+  setvbuf(stdout, NULL, _IONBF, 0);
+
+  // ... Erstellung der Tasks und Start ...
+}
+\end{lstlisting}
+
+\section{Testfall 1: Verifikation der Prioritätsvererbung (PIP)}
+Zur Demonstration und Verifikation der korrekten Funktionsweise der Prioritätsvererbung wird in \lstinline|main.c| folgendes Szenario konfiguriert (\lstinline|CURRENT_TEST_MODE == TEST_MODE_PRIORITY_INHERITANCE|):
+
+\begin{itemize}
+    \item \textbf{TaskLow (Prio 3):} Startet zuerst, sperrt den Mutex \lstinline|MyTestMutex|, simuliert Arbeit durch Schlafen für 1000\,ms (\lstinline|Kernel_TaskDelay(1000)|) und gibt danach den Mutex frei.
+    \item \textbf{TaskMedium (Prio 2):} Startet nach 200\,ms Verzögerung, um sicherzustellen, dass TaskLow den Mutex hält. Führt eine rechenintensive Schleife für 1,5 Sekunden aus, ohne das System freiwillig abzugeben (Preemption-Versuch).
+    \item \textbf{TaskHigh (Prio 1):} Startet nach 400\,ms. Versucht den Mutex zu sperren und blockiert, da TaskLow ihn hält.
+\end{itemize}
+
+\subsection{Erwarteter Ablauf ohne Prioritätsvererbung}
+Ohne PIP würde Folgendes passieren:
+\begin{enumerate}
+    \item TaskLow (Prio 3) sperrt den Mutex.
+    \item TaskMedium (Prio 2) wacht auf und verdrängt TaskLow (da $2 < 3$).
+    \item TaskHigh (Prio 1) wacht auf, versucht den Mutex zu sperren und blockiert. Da TaskLow blockiert ist, schläft TaskHigh weiter.
+    \item TaskMedium (Prio 2) läuft ungehindert 1,5 Sekunden lang zu Ende.
+    \item Erst danach darf TaskLow wieder laufen, beendet ihren kritischen Abschnitt, gibt den Mutex frei.
+    \item TaskHigh darf nun endlich den Mutex nehmen.
+\end{enumerate}
+In diesem Fall wurde die hochpriorisierte TaskHigh durch die mittlere TaskMedium für die gesamte Berechnungsdauer (1,5\,s) blockiert. Das ist die klassische Prioritätsinversion.
+
+\subsection{Tatsächlicher Ablauf mit PIP (DOS-Verhalten)}
+Mit der implementierten Prioritätsvererbung sieht die PuTTY-Konsolenausgabe wie folgt aus:
+
+\begin{lstlisting}[basicstyle=\ttfamily\footnotesize, caption={Konsolenausgabe des PIP-Tests in PuTTY}]
+[Low  Task] 1. Trying to lock Mutex...
+[Low  Task] 2. Mutex locked. Critical work (1s)...
+[Med  Task] Loop Start (1.5s active computation)...
+[High Task] Trying to lock Mutex (will block)...
+[High Task] Success! Mutex locked.
+[High Task] Mutex unlocked.
+[Med  Task] Loop Finished.
+\end{lstlisting}
+
+\subsection{Analyse der Tracedaten}
+\begin{enumerate}
+    \item \textbf{Zeile 1--2:} TaskLow startet und belegt erfolgreich den Mutex.
+    \item \textbf{Zeile 3:} TaskMedium wacht auf (nach 200\,ms) und verdrängt TaskLow, da sie Prio 2 hat. Sie beginnt ihre rechenintensive Arbeit.
+    \item \textbf{Zeile 4:} TaskHigh wacht auf (nach 400\,ms) und versucht den Mutex zu sperren. Sie blockiert. In diesem Moment greift das PIP: Da TaskHigh (Prio 1) blockiert, erbt TaskLow (Besitzer des Mutexes) sofort die Priorität 1.
+    \item Da TaskLow nun Priorität 1 hat, verdrängt sie TaskMedium (Prio 2) sofort! TaskMedium wird suspendiert.
+    \item TaskLow beendet ihre restliche Arbeit im kritischen Abschnitt und gibt den Mutex frei.
+    \item Durch die Freigabe des Mutexes wird TaskHigh aufgeweckt. Gleichzeitig wird die Priorität von TaskLow wieder auf Prio 3 zurückgesetzt.
+    \item TaskHigh (Prio 1) läuft sofort an (Zeile 5), arbeitet und gibt den Mutex wieder frei (Zeile 6).
+    \item Da nun weder TaskLow (Prio 3) noch TaskHigh (in Delay) rechenbereit sind, darf TaskMedium (Prio 2) ihre unterbrochene Arbeit fortsetzen und beendet ihre Berechnung (Zeile 7).
+\end{enumerate}
+Dieses Protokoll beweist eindeutig, dass die Prioritätsvererbung in DOS voll funktionsfähig ist.
+
+\section{Verständnis- und Kontrollfragen}
+\begin{enumerate}
+    \item \textbf{Frage:} Was passiert mit den Ausgaben der Konsole, wenn der Befehl \lstinline|setvbuf(stdout, NULL, _IONBF, 0)| im \lstinline|main|-Programm weggelassen wird?
+    
+    \textit{Antwort:} Ohne den Aufruf von \lstinline|setvbuf| bleibt die Konsole in PuTTY dauerhaft leer. Standardmäßig puffert die GCC-Bibliothek die Zeichen im RAM. Da ein eingebettetes System in der Regel keine Datei schreibt und das Programm niemals beendet wird (wodurch ein automatischer Puffer-Flush stattfinden würde), werden die Zeichen niemals an die UART-Schnittstelle übertragen. \lstinline|_IONBF| schaltet jegliche Pufferung ab, sodass jedes Zeichen von \lstinline|printf| sofort einzeln gesendet wird.
+    
+    \item \textbf{Frage:} Warum ist es bei seriellen Terminals wichtig, \lstinline|\r\n| statt eines einfachen \lstinline|\n| in \lstinline|printf| zu verwenden?
+    
+    \textit{Antwort:} Ein einfaches Newline-Zeichen (\lstinline|\n|) bewirkt in vielen Standard-Terminals lediglich einen Zeilenvorschub (Line Feed), d. h. der Cursor springt eine Zeile nach unten, behält aber seine horizontale Position (Spalte) bei. Um den Cursor an den Anfang der neuen Zeile (Spalte 0) zu setzen, ist das Carriage-Return-Zeichen (\lstinline|\r|) zwingend erforderlich. Ohne \lstinline|\r| würden nachfolgende Textausgaben treppenartig nach rechts verschoben dargestellt werden und die Lesbarkeit wäre zerstört.
+\end{enumerate}

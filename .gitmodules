@@ -1,0 +1,6 @@
+[submodule "SystemView"]
+	path = SystemView
+	url = https://github.com/SEGGERMicro/SystemView
+[submodule "RTT"]
+	path = RTT
+	url = https://github.com/SEGGERMicro/RTT

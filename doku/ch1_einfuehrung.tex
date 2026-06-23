@@ -1,0 +1,58 @@
+\chapter{Systemübersicht und Systemvoraussetzungen}
+\label{ch:einfuehrung}
+
+\section{Systemübersicht}
+Das Echtzeitbetriebssystem \textbf{Danielou OS (DOS)} ist ein maßgeschneidertes, prioritätsbasiertes Real-Time Operating System (RTOS) für eingebettete Systeme auf Basis des ARM Cortex-M4-Prozessors. Das System wurde für Ausbildungszwecke im Rahmen des Master-Projektseminars Echtzeitsysteme an der Technische Hochschule Mittelhessen (THM) entwickelt. Es implementiert die Kernkonzepte moderner RTOS-Architekturen in einer minimalistischen und nachvollziehbaren Art und Weise.
+
+Der Fokus des Entwurfs liegt auf:
+\begin{itemize}
+    \item \textbf{Einfachheit:} Minimierung von Hardware-Abhängigkeiten und Verzicht auf komplexe Speicherverwaltungen.
+    \item \textbf{Vorhersagbarkeit:} Prioritätsgesteuertes Scheduling mit deterministischen Umschaltzeiten.
+    \item \textbf{Robuste Synchronisation:} Semaphoren und Mutexes inklusive Mechanismen zur Vermeidung von Prioritätsinversion.
+    \item \textbf{Effiziente IPC:} Message Queues für blockierende und nicht-blockierende Kommunikation.
+\end{itemize}
+
+\section{Systemvoraussetzungen und Einschränkungen}
+Das Betriebssystem DOS wurde unter folgenden technischen Rahmenbedingungen entworfen:
+\begin{enumerate}
+    \item \textbf{Single Stack Pointer (MSP-only):} Zur Reduzierung der Komplexität nutzt DOS ausschließlich den \textit{Main Stack Pointer} (MSP) des Cortex-M4. Auf den Einsatz des \textit{Process Stack Pointer} (PSP) wird verzichtet. Dies bedeutet, dass sowohl der Kernel als auch alle Task-Kontexte auf demselben physikalischen Stack-Bereich arbeiten, wobei jede Task ihren eigenen Speicherbereich innerhalb des Haupt-Stacks zugewiesen bekommt.
+    \item \textbf{Soft-Floating-Point (Deaktivierung der FPU):} Um den Kontextwechsel schnell und deterministisch zu halten, wird die Fließkommaeinheit (Floating Point Unit, FPU) des Cortex-M4 explizit deaktiviert. Berechnungen erfolgen über Software-Emulation (Soft-FP). Dadurch müssen die FPU-Register (S0--S31, FPSCR) bei einem Task-Wechsel nicht gesichert werden, was den Kontext-Frame um 34 Worte reduziert.
+    \item \textbf{Implementierung in C und Assembler:} Der gesamte Kernel ist in Standard-C (C99) geschrieben. Lediglich der eigentliche Kontextwechsel (Sichern und Wiederherstellen der CPU-Register) ist in Assembler verfasst, da hierfür ein direkter Zugriff auf Kernregister notwendig ist.
+\end{enumerate}
+
+\section{Hardware-Konfiguration und FPU-Deaktivierung}
+Bei der Initialisierung des Kernels in der Funktion \lstinline|Kernel_InitializeHardwareAndTCBStructures| wird die Hardware gezielt konfiguriert. Ein zentraler Schritt ist dabei die Deaktivierung des Coprozessors (FPU) über das \textit{Coprocessor Access Control Register} (CPACR) bei der Adresse \lstinline|0xE000ED88|.
+
+Hier ist der entsprechende Codeausschnitt aus \lstinline|kernel.c|:
+
+\begin{lstlisting}[language=C, caption={Deaktivierung der FPU in kernel.c}, label={lst:fpu_deact}]
+// Hardware-Register-Adresse definieren
+#define COPROCESSOR_ACCESS_CONTROL_REGISTER_ADDRESS  ( 0xE000ED88u )
+
+void Kernel_InitializeHardwareAndTCBStructures(void)
+{
+    /* FPU (mathematischer Koprozessor) deaktivieren */
+    volatile uint32_t *cpacr = (volatile uint32_t *)COPROCESSOR_ACCESS_CONTROL_REGISTER_ADDRESS;
+    *cpacr &= ~(0xFu << 20); // Bits 20-23 loeschen
+    
+    // ... restliche Initialisierung ...
+}
+\end{lstlisting}
+
+\subsection{Detaillierte Zeilenbeschreibung}
+\begin{itemize}
+    \item \textbf{Zeile 2:} Definiert die physikalische Speicheradresse des Registers \lstinline|CPACR| auf dem ARM Cortex-M4. Dieses Register steuert die Zugriffsrechte für die Coprozessoren CP10 und CP11, welche zusammen die FPU bilden.
+    \item \textbf{Zeile 7:} Castet die Adresse in einen flüchtigen Zeiger (\lstinline|volatile uint32_t *|), um dem Compiler mitzuteilen, dass dieser Speicherbereich von der Hardware verändert werden kann und somit Zugriffe nicht wegoptimiert werden dürfen.
+    \item \textbf{Zeile 8:} Löscht die Bits 20 bis 23 im Register. Diese vier Bits konfigurieren die Zugriffsrechte für CP10 und CP11 (FPU). Ein Wert von \lstinline|0b0000| sperrt den Zugriff vollständig und deaktiviert damit die FPU-Hardware.
+\end{itemize}
+
+\section{Verständnis- und Kontrollfragen}
+\begin{enumerate}
+    \item \textbf{Frage:} Warum wird die FPU in DOS deaktiviert und welche Auswirkung hat dies auf die Task-Stacks?
+    
+    \textit{Antwort:} Die FPU wird deaktiviert, um den Kontextwechsel zu vereinfachen und zu beschleunigen. Wenn die FPU aktiv ist, müsste der Scheduler bei jedem Kontextwechsel zusätzlich zu den Standardregistern (R0-R12, LR, PC, xPSR) auch noch 32 FPU-Register (S0-S31) und das FPSCR-Register auf dem Stack sichern und wiederherstellen (so genanntes \textit{Lazy Stacking} oder \textit{Full Stacking}). Die Deaktivierung spart erhebliche Mengen an RAM-Speicherplatz pro Task-Stack (136 Bytes Ersparnis pro Stack-Frame) und verkürzt die Interrupt-Latenz des Schedulers.
+    
+    \item \textbf{Frage:} Welche Konsequenz hat die Verwendung eines einzigen Stack-Pointers (MSP-only) für die Sicherheit des Systems?
+    
+    \textit{Antwort:} Da DOS ausschließlich den \textit{Main Stack Pointer} (MSP) verwendet, teilen sich der Kernel (Interrupt-Handler) und die Anwendungstasks denselben physikalischen Stack-Mechanismus. Wenn ein Task seinen Stack-Bereich überschreitet (Stack Overflow), kann er direkt den Stack anderer Tasks oder des Kernels überschreiben. Bei einer sauber getrennten Architektur mit MSP (für Interrupts/Kernel) und PSP (für Benutzertasks) kann die Hardware (über die Memory Protection Unit, MPU) Speicherzugriffsfehler isolieren und verhindern, dass ein Anwendungsverhalten den Kernel abstürzen lässt. Für Lernzwecke reduziert das MSP-only-Design jedoch den Assembler-Overhead signifikant.
+\end{enumerate}

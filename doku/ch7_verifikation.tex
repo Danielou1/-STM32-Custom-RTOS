@@ -1,0 +1,54 @@
+\chapter{Instrumentierung und formale Verifikation}
+\label{ch:verifikation}
+
+\section{Echtzeitanalyse mit Segger SystemView und RTT}
+Für ein zuverlässiges Debugging und die Leistungsbewertung von Echtzeitbetriebssystemen ist eine visuelle Laufzeitanalyse unerlässlich. DOS integriert hierzu \textbf{Segger SystemView} über die \textbf{Real-Time Transfer (RTT)}-Schnittstelle des J-Link-Debuggers.
+
+\subsection{Das RTT-Konzept}
+Segger RTT nutzt einen kleinen Speicherbereich (Ringpuffer) im internen SRAM des STM32L475. Der J-Link-Debug-Adapter liest diesen Puffer über den SWD-Anschluss (Serial Wire Debug) während der Laufzeit aus, ohne die CPU anzuhalten. Die Übertragung erfolgt im Hintergrund mit minimaler Verzögerung ($< 1\,\mu\text{s}$ pro Event), was RTT deutlich performanter und weniger störend für das Echtzeitverhalten macht als eine klassische UART-Verbindung.
+
+\subsection{SystemView-Konfiguration für DOS}
+In der Konfigurationsdatei \lstinline|SEGGER_SYSVIEW_Config_DOS.c| wurden die systemspezifischen Parameter für DOS und das Discovery Board definiert:
+\begin{itemize}
+    \item \textbf{CPU-Takt:} \lstinline|80 MHz| (entspricht \lstinline|SystemCoreClock|).
+    \item \textbf{RAM-Basis:} \lstinline|0x20000000| (Startadresse des SRAM1 auf dem STM32L475, wichtig für die effiziente ID-Kompression).
+    \item \textbf{Systembeschreibung:} Registrierung unseres OS-Namens (DOS) sowie der Hardware-Exceptions für SysTick (ID 15) und PendSV (ID 14).
+\end{itemize}
+
+\subsection{Kernel-Instrumentierung (Hooks)}
+Um das Schaltverhalten des Schedulers sichtbar zu machen, wurden an kritischen Punkten im Kernel-Quellcode SystemView-Schnittstellen eingefügt:
+\begin{enumerate}
+    \item \textbf{Task-Erstellung:} In \lstinline|Kernel_CreateNewTask| registriert \lstinline|SEGGER_SYSVIEW_OnTaskCreate| die TCB-Adresse als eindeutige Task-ID. Zusätzlich übermittelt \lstinline|SEGGER_SYSVIEW_SendTaskInfo| den Task-Namen, die Basispriorität sowie die Stack-Größe an den PC.
+    \item \textbf{Kontextwechsel (Scheduler):} In \lstinline|Kernel_ContextSwitch| signalisiert \lstinline|SEGGER_SYSVIEW_OnTaskStopReady| das Ende der Ausführung des alten Tasks. Nach Auswahl des neuen Tasks markiert \lstinline|SEGGER_SYSVIEW_OnTaskStartExec| dessen Start.
+    \item \textbf{Interrupt-Überwachung (SysTick):} Da SysTick den Scheduler triggert, wird er in \lstinline|SysTick_Handler| mit \lstinline|SEGGER_SYSVIEW_RecordEnterISR| beim Eintritt und \lstinline|SEGGER_SYSVIEW_RecordExitISR| beim Austritt umschlossen.
+\end{enumerate}
+
+\section{Laufzeit-Verifikation mit TeSSLa}
+Während SystemView der interaktiven visuellen Fehlersuche dient, ermöglicht die Spezifikationssprache \textbf{TeSSLa (Temporal Stream-based Specification Language)} eine automatisierte mathematische Verifikation kritischer Echtzeitanforderungen des Kernels.
+
+\subsection{Workflow der externen Verifikation}
+Da die Rechen- und Speicherressourcen auf dem STM32 begrenzt sind, erfolgt die Überwachung \textbf{offline} oder \textbf{asynchron online}. Der STM32-Kernel gibt hierzu kontinuierlich strukturierte Protokollzeilen über die USART1-Verbindung aus (z. B. bei jedem Task-Wechsel oder Mutex-Zugriff). Ein auf dem Host-PC laufender TeSSLa-Interpreter liest diese Event-Ströme ein und prüft sie gegen eine vordefinierte Spezifikationsdatei (\lstinline|verification.tessla|).
+
+\subsection{Spezifikation kritischer RTOS-Eigenschaften}
+Die Spezifikationsdatei definiert Ströme wie \lstinline|active_task| und \lstinline|mutex_action| und implementiert die folgenden Sicherheitsregeln:
+
+\begin{enumerate}
+    \item \textbf{Mutual Exclusion (Gegenseitiger Ausschluss):} Verifikation, dass sich nie zwei Tasks gleichzeitig im kritischen Abschnitt des gleichen Mutex befinden. Ein Verstoß wird über den Ausgangsstrom \lstinline|mutex_error| ausgegeben.
+    \item \textbf{Antwortzeit-Garantie (Response Time / Deadlines):} Eine Echtzeit-Task (z. B. Task 1) muss nach dem Übergang in den \lstinline|Ready|-Zustand innerhalb einer festen Frist ($15$\,ms) ausgeführt werden. TeSSLa berechnet die Differenz der Zeitstempel von \lstinline|task1_ready| und \lstinline|task1_running| und signalisiert eventuelle Deadline-Verletzungen (\lstinline|deadline_violation|).
+    \item \textbf{Nachweis der Prioritätsvererbung (PIP):} Falls die hochpriorisierte Task 1 durch einen Mutex von der niedrigpriorisierten Task 3 blockiert ist, darf die mittlere Task 2 nicht dazwischenfunken. Tritt dieser Fall dennoch ein, wird eine unbeschränkte Prioritätsinversion detektiert (\lstinline|medium_running_during_inversion|).
+\end{enumerate}
+
+\section{Verständnis- und Kontrollfragen}
+\begin{enumerate}
+    \item \textbf{Frage:} Warum ist die Nutzung von Segger RTT für das Tracing von Echtzeitsystemen besser geeignet als eine klassische Textausgabe über UART?
+    
+    \textit{Antwort:} Das Senden von Textnachrichten über ein UART-Interface ist extrem langsam (bei 115200 Baud dauert das Senden eines einzelnen Zeichens ca. $86\,\mu\text{s}$, eine typische Debug-Zeile blockiert die CPU schnell für mehrere Millisekunden). Dies verändert das zeitliche Verhalten des Systems drastisch (so genannter \textit{Probe-Effect} oder \textit{Heisenbug}), wodurch Timing-Fehler maskiert werden können. Segger RTT hingegen schreibt die Event-Daten binär in einen RAM-Puffer, was weniger als $1\,\mu\text{s}$ beansprucht. Die CPU läuft nahezu unbeeinflusst weiter, während der J-Link-Debugger die Daten unabhängig ausliest.
+    
+    \item \textbf{Frage:} Wie wird der Zeitstempel (Timestamp) für SystemView generiert und warum muss er mit \lstinline|SystemCoreClock| übereinstimmen?
+    
+    \textit{Antwort:} Standardmäßig nutzt SystemView auf Cortex-M-Prozessoren den hardwareseitigen Cycle Counter der \textit{Data Watchpoint and Trace (DWT)}-Einheit. Dieser Zähler wird bei jedem Taktzyklus des Prozessors inkrementiert. Da der STM32L475 mit 80 MHz taktet, läuft auch der Cycle Counter mit 80 Millionen Ticks pro Sekunde. Damit SystemView auf dem PC diese Ticks korrekt in echte physikalische Zeiteinheiten (Mikrosekunden, Millisekunden) umrechnen kann, muss ihm die Frequenz des Zählers über den Parameter \lstinline|SYSVIEW_TIMESTAMP_FREQ| mitgeteilt werden. Ist diese Angabe fehlerhaft, wird die Zeitachse im Analysetool gestaucht oder gedehnt dargestellt.
+    
+    \item \textbf{Frage:} Warum wird die TeSSLa-Verifikation auf dem Host-PC ausgeführt und nicht direkt auf dem STM32-Mikrocontroller?
+    
+    \textit{Antwort:} TeSSLa-Spezifikationen können beliebig komplex werden (z. B. zeitliche Verknüpfungen über unbegrenzte Historien hinweg, mathematische Berechnungen). Die Ausführung dieses Verifikations-Monitors erfordert eine virtuelle Maschine (JVM) und signifikante RAM- und CPU-Ressourcen. Ein Mikrocontroller wie der STM32L475 mit 128\,KB RAM und 80\,MHz CPU wäre durch die direkte Ausführung des Monitors völlig überlastet, was die Echtzeitfähigkeit der Applikation komplett zerstören würde. Durch das Auslagern auf den PC (Non-Intrusive Runtime Verification) bleibt die Zielhardware frei für ihre eigentlichen Steuerungsaufgaben.
+\end{enumerate}
