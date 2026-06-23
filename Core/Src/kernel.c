@@ -127,8 +127,8 @@ uint32_t Kernel_ContextSwitch(uint32_t current_sp)
 
     /* TeSSLa Logging fuer Kontextwechsel */
     printf("%lu: active_task = %d\r\n", HAL_GetTick(), Global_IndexDerAktuellenTask);
-    if (Global_IndexDerAktuellenTask == 1) {
-        printf("%lu: task_state = 1\r\n", HAL_GetTick());
+    if (Global_IndexDerAktuellenTask != 0) {
+        printf("%lu: task_state = %d\r\n", HAL_GetTick(), Global_IndexDerAktuellenTask);
         printf("%lu: state_val = 2\r\n", HAL_GetTick()); // 2 = Running
     }
 
@@ -231,8 +231,8 @@ void Kernel_TaskDelay(uint32_t u32DelayInTicks)
         Global_PointerToCurrentlyRunningTCB->eTaskState = TaskState_Blocked;
 
         /* TeSSLa Logging fuer Task-Blockierung (Delay) */
-        if (Global_IndexDerAktuellenTask == 1) {
-            printf("%lu: task_state = 1\r\n", HAL_GetTick());
+        if (Global_IndexDerAktuellenTask != 0) {
+            printf("%lu: task_state = %d\r\n", HAL_GetTick(), Global_IndexDerAktuellenTask);
             printf("%lu: state_val = 3\r\n", HAL_GetTick()); // 3 = Blocked
         }
 
@@ -259,8 +259,8 @@ void Kernel_UpdateTimers(void)
                     Global_ArrayOfAllTCBs[i].eTaskState = TaskState_Ready;
                     
                     /* TeSSLa Logging fuer Aufwecken (Ready) */
-                    if (i == 1) {
-                        printf("%lu: task_state = 1\r\n", HAL_GetTick());
+                    if (i != 0) {
+                        printf("%lu: task_state = %d\r\n", HAL_GetTick(), i);
                         printf("%lu: state_val = 1\r\n", HAL_GetTick()); // 1 = Ready
                     }
                 }
@@ -413,8 +413,8 @@ void Kernel_MutexLock(Kernel_Mutex_t *pMutex)
                 Global_PointerToCurrentlyRunningTCB->eTaskState = TaskState_Blocked;
 
                 /* TeSSLa Logging fuer Task-Blockierung auf Mutex */
-                if (Global_IndexDerAktuellenTask == 1) {
-                    printf("%lu: task_state = 1\r\n", HAL_GetTick());
+                if (Global_IndexDerAktuellenTask != 0) {
+                    printf("%lu: task_state = %d\r\n", HAL_GetTick(), Global_IndexDerAktuellenTask);
                     printf("%lu: state_val = 3\r\n", HAL_GetTick()); // 3 = Blocked
                 }
 
@@ -548,8 +548,8 @@ void Kernel_MutexUnlock(Kernel_Mutex_t *pMutex)
                             break;
                         }
                     }
-                    if (wakeIdx == 1) {
-                        printf("%lu: task_state = 1\r\n", HAL_GetTick());
+                    if (wakeIdx != 0) {
+                        printf("%lu: task_state = %d\r\n", HAL_GetTick(), wakeIdx);
                         printf("%lu: state_val = 1\r\n", HAL_GetTick()); // 1 = Ready
                     }
                 }

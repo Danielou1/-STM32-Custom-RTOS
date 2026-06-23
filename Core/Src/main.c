@@ -264,10 +264,10 @@ int main(void)
   /* 2. Mutex initialisieren */
   Kernel_MutexInit(&MyTestMutex);
   
-  /* 3. Tasks registrieren (Low=3, Medium=2, High=1) */
-  Kernel_CreateNewTask(TaskLow, 3);
-  Kernel_CreateNewTask(TaskMedium, 2);
+  /* 3. Tasks registrieren (High=1, Medium=2, Low=3) */
   Kernel_CreateNewTask(TaskHigh, 1);
+  Kernel_CreateNewTask(TaskMedium, 2);
+  Kernel_CreateNewTask(TaskLow, 3);
 #elif (CURRENT_TEST_MODE == TEST_MODE_MESSAGE_QUEUE)
   /* 2. Queue initialisieren (Kapazität: 3 Nachrichten) */
   Kernel_QueueInit(&MyTestQueue, 3);
