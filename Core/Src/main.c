@@ -817,7 +817,7 @@ static void MX_GPIO_Init(void)
 
 PUTCHAR_PROTOTYPE
 {
-  HAL_UART_Transmit(&huart3, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
+  HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
   return ch;
 }
 /* USER CODE END 4 */
