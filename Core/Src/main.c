@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "kernel.h"
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -54,7 +55,18 @@ UART_HandleTypeDef huart3;
 PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
 /* USER CODE BEGIN PV */
-Kernel_Semaphore_t MyTestSemaphore;
+#define TEST_MODE_PRIORITY_INHERITANCE    1
+#define TEST_MODE_MESSAGE_QUEUE          2
+
+/* Hier den gewünschten Testmodus einstellen! */
+#define CURRENT_TEST_MODE                 TEST_MODE_PRIORITY_INHERITANCE
+
+#if (CURRENT_TEST_MODE == TEST_MODE_PRIORITY_INHERITANCE)
+Kernel_Mutex_t MyTestMutex;
+volatile uint32_t u32TestProgress = 0;
+#elif (CURRENT_TEST_MODE == TEST_MODE_MESSAGE_QUEUE)
+Kernel_Queue_t MyTestQueue;
+#endif
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -68,59 +80,138 @@ static void MX_USART1_UART_Init(void);
 static void MX_USART3_UART_Init(void);
 static void MX_USB_OTG_FS_PCD_Init(void);
 /* USER CODE BEGIN PFP */
-void Task1_Einschalten(void);
-void Task2_Ausschalten(void);
+#if (CURRENT_TEST_MODE == TEST_MODE_PRIORITY_INHERITANCE)
+void TaskLow(void);
+void TaskMedium(void);
+void TaskHigh(void);
+#elif (CURRENT_TEST_MODE == TEST_MODE_MESSAGE_QUEUE)
+void TaskProducer(void);
+void TaskConsumer(void);
+#endif
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#if (CURRENT_TEST_MODE == TEST_MODE_PRIORITY_INHERITANCE)
 /**
- * Task 1: Nimmt das Semaphor und schaltet die LED ein.
+ * TaskLow (Prio 3): Nimmt den Mutex, geht schlafen, simuliert kritischen Abschnitt.
  */
-void Task1_Einschalten(void)
+void TaskLow(void)
 {
     while(1)
     {
-        /* Warte auf den Jeton (Blockiert, wenn Task 2 ihn hat) */
-        Kernel_SemaphoreWait(&MyTestSemaphore);
-
-        /* LD1 (Grün) einschalten (PA5) */
+        printf("\r\n[Low  Task] 1. Trying to lock Mutex...\r\n");
+        Kernel_MutexLock(&MyTestMutex);
+        
+        u32TestProgress = 1;
+        printf("[Low  Task] 2. Mutex locked. Critical work (1s)...\r\n");
         HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
-
-        /* Halte die Ressource für 1 Sekunde */
-        Kernel_TaskDelay(1000);
-
-        /* Jeton zurückgeben */
-        Kernel_SemaphoreGive(&MyTestSemaphore);
         
-        /* Kurze Pause, damit der Scheduler wechseln kann */
-        Kernel_TaskDelay(10);
+        Kernel_TaskDelay(1000);
+        
+        u32TestProgress = 2;
+        printf("[Low  Task] 3. Unlocking Mutex...\r\n");
+        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+        Kernel_MutexUnlock(&MyTestMutex);
+        
+        Kernel_TaskDelay(2000);
     }
 }
 
 /**
- * Task 2: Nimmt das Semaphor und schaltet die LED aus.
+ * TaskMedium (Prio 2): Versucht CPU mit einer aktiven Schleife zu blockieren.
  */
-void Task2_Ausschalten(void)
+void TaskMedium(void)
 {
+    /* Wartet 200ms, damit TaskLow zuerst den Mutex sperren kann */
+    Kernel_TaskDelay(200);
+    
     while(1)
     {
-        /* Warte auf den Jeton (Blockiert, wenn Task 1 ihn hat) */
-        Kernel_SemaphoreWait(&MyTestSemaphore);
-
-        /* LD1 (Grün) ausschalten (PA5) */
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
-
-        /* Halte die Ressource für 1 Sekunde */
-        Kernel_TaskDelay(1000);
-
-        /* Jeton zurückgeben */
-        Kernel_SemaphoreGive(&MyTestSemaphore);
+        printf("[Med  Task] Loop Start (1.5s active computation)...\r\n");
+        HAL_GPIO_WritePin(GPIOB, LED2_Pin, GPIO_PIN_SET);
         
-        /* Kurze Pause, damit der Scheduler wechseln kann */
-        Kernel_TaskDelay(10);
+        /* Aktive Rechenzeit simulieren (ca. 1,5s active loop) */
+        for(volatile uint32_t i = 0; i < 6000000; i++)
+        {
+            __asm volatile ("nop");
+        }
+        
+        HAL_GPIO_WritePin(GPIOB, LED2_Pin, GPIO_PIN_RESET);
+        printf("[Med  Task] Loop Finished.\r\n");
+        
+        Kernel_TaskDelay(2000);
     }
 }
+
+/**
+ * TaskHigh (Prio 1): Wartet kurz und versucht den Mutex zu sperren.
+ */
+void TaskHigh(void)
+{
+    /* Wartet 400ms, damit TaskLow Mutex sperrt und TaskMedium bereit ist */
+    Kernel_TaskDelay(400);
+    
+    while(1)
+    {
+        printf("[High Task] Trying to lock Mutex (will block)...\r\n");
+        Kernel_MutexLock(&MyTestMutex);
+        
+        u32TestProgress = 3;
+        printf("[High Task] Success! Mutex locked.\r\n");
+        HAL_GPIO_TogglePin(GPIOC, LED3_WIFI__LED4_BLE_Pin);
+        
+        Kernel_MutexUnlock(&MyTestMutex);
+        printf("[High Task] Mutex unlocked.\r\n");
+        
+        Kernel_TaskDelay(2000);
+    }
+}
+
+#elif (CURRENT_TEST_MODE == TEST_MODE_MESSAGE_QUEUE)
+/**
+ * TaskProducer (Prio 2): Schreibt Daten in die Queue.
+ */
+void TaskProducer(void)
+{
+    uint32_t u32MsgCounter = 100;
+    
+    while(1)
+    {
+        printf("[Producer] Trying to send: %lu\r\n", u32MsgCounter);
+        if (Kernel_QueueSend(&MyTestQueue, u32MsgCounter, 1) == KernelError_NoErrorMessage)
+        {
+            printf("[Producer] Send SUCCESS: %lu\r\n", u32MsgCounter);
+            HAL_GPIO_TogglePin(GPIOB, LED2_Pin);
+            u32MsgCounter++;
+        }
+        
+        /* Sendet alle 500ms */
+        Kernel_TaskDelay(500);
+    }
+}
+
+/**
+ * TaskConsumer (Prio 1): Liest Daten aus der Queue (Langsamer als Producer).
+ */
+void TaskConsumer(void)
+{
+    uint32_t u32ReceivedVal = 0;
+    
+    while(1)
+    {
+        printf("[Consumer] Trying to receive...\r\n");
+        if (Kernel_QueueReceive(&MyTestQueue, &u32ReceivedVal, 1) == KernelError_NoErrorMessage)
+        {
+            printf("[Consumer] Receive SUCCESS: %lu\r\n", u32ReceivedVal);
+            HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+        }
+        
+        /* Liest nur alle 1500ms -> Queue wird volllaufen und Producer blockieren */
+        Kernel_TaskDelay(1500);
+    }
+}
+#endif
 /* USER CODE END 0 */
 
 /**
@@ -166,15 +257,27 @@ int main(void)
   /* 1. Kernel-Strukturen vorbereiten */
   Kernel_InitializeHardwareAndTCBStructures();
 
-  /* 2. Semaphor initialisieren (Startwert 1 Jeton, Max 1) */
-  Kernel_SemaphoreInit(&MyTestSemaphore, 1, 1);
+  /* Disable buffering on stdout to ensure printf messages are sent immediately to UART */
+  setvbuf(stdout, NULL, _IONBF, 0);
+
+#if (CURRENT_TEST_MODE == TEST_MODE_PRIORITY_INHERITANCE)
+  /* 2. Mutex initialisieren */
+  Kernel_MutexInit(&MyTestMutex);
   
-  /* 3. Unsere beiden Test-Tasks registrieren */
-  /* Die Priorität ist momentan 1 für beide (Round-Robin) */
-  Kernel_CreateNewTask(Task1_Einschalten);
-  Kernel_CreateNewTask(Task2_Ausschalten);
+  /* 3. Tasks registrieren (Low=3, Medium=2, High=1) */
+  Kernel_CreateNewTask(TaskLow, 3);
+  Kernel_CreateNewTask(TaskMedium, 2);
+  Kernel_CreateNewTask(TaskHigh, 1);
+#elif (CURRENT_TEST_MODE == TEST_MODE_MESSAGE_QUEUE)
+  /* 2. Queue initialisieren (Kapazität: 3 Nachrichten) */
+  Kernel_QueueInit(&MyTestQueue, 3);
   
-  /* 3. Den Scheduler starten - Ab hier übernimmt das RTOS die Kontrolle! */
+  /* 3. Tasks registrieren (Consumer=1, Producer=2) */
+  Kernel_CreateNewTask(TaskConsumer, 1);
+  Kernel_CreateNewTask(TaskProducer, 2);
+#endif
+  
+  /* 4. Den Scheduler starten */
   Kernel_StartScheduling();
 
   /* USER CODE END 2 */
@@ -706,7 +809,17 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+#ifdef __GNUC__
+#define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
+#else
+#define PUTCHAR_PROTOTYPE int fputc(int ch, FILE *f)
+#endif
 
+PUTCHAR_PROTOTYPE
+{
+  HAL_UART_Transmit(&huart3, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
+  return ch;
+}
 /* USER CODE END 4 */
 
 /**
