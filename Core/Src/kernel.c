@@ -76,20 +76,10 @@ static void Kernel_IdleTask(void)
 /* Intelligenter Scheduler: nimmt den alten Stack-Pointer, gibt den neuen zurück! */
 uint32_t Kernel_ContextSwitch(uint32_t current_sp)
 {
-    /* DEBUG: LED3 (PC9) bei jedem Kontextwechsel umschalten, um zu beweisen, dass der Kernel lebt */
-    HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_9);
-
-    /* 1. Sichert den SP des ausgehenden Tasks */
+    /* 1. Vorübergehende Sicherung des SP des ausgehenden Tasks */
     if (Global_PointerToCurrentlyRunningTCB != NULL)
     {
-        SEGGER_SYSVIEW_OnTaskStopReady((uint32_t)Global_PointerToCurrentlyRunningTCB, 0);
         Global_PointerToCurrentlyRunningTCB->u32TaskSP = current_sp;
-        
-        /* Wenn die Task nicht blockiert ist, setzen wir sie zurück auf Ready */
-        if (Global_PointerToCurrentlyRunningTCB->eTaskState == TaskState_Running)
-        {
-            Global_PointerToCurrentlyRunningTCB->eTaskState = TaskState_Ready;
-        }
     }
 
     /* 2. Auswahl des nächsten Tasks (Priority-Based Scheduling mit Fairness) */
@@ -113,6 +103,29 @@ uint32_t Kernel_ContextSwitch(uint32_t current_sp)
                 u8HighestPrioFound = Global_ArrayOfAllTCBs[idx].u8CurrentPriority;
                 u8BestTaskIndex = idx;
             }
+        }
+    }
+
+    /* Optimierung: Wenn die ausgewählte Task dieselbe ist, die bereits läuft, 
+       verhindern wir unnötige Statusänderungen, SystemView-Hooks und UART-Ausgaben. */
+    if (Global_PointerToCurrentlyRunningTCB != NULL && 
+        u8BestTaskIndex == Global_IndexDerAktuellenTask && 
+        Global_PointerToCurrentlyRunningTCB->eTaskState == TaskState_Running)
+    {
+        return current_sp;
+    }
+
+    /* Tatsächlicher Kontextwechsel findet statt */
+    HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_9); // Toggled bei jedem echten Kontextwechsel
+
+    if (Global_PointerToCurrentlyRunningTCB != NULL)
+    {
+        SEGGER_SYSVIEW_OnTaskStopReady((uint32_t)Global_PointerToCurrentlyRunningTCB, 0);
+        
+        /* Wenn die Task nicht blockiert ist, setzen wir sie zurück auf Ready */
+        if (Global_PointerToCurrentlyRunningTCB->eTaskState == TaskState_Running)
+        {
+            Global_PointerToCurrentlyRunningTCB->eTaskState = TaskState_Ready;
         }
     }
 
