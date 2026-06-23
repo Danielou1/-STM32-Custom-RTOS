@@ -26,7 +26,7 @@ This project involves the development of a custom RTOS for the STM32 Discovery K
 - [x] **Forensic Analysis:** Successfully debugged INVPC (UsageFault) and Null-Pointer corruption issues.
 - [x] **Kernel Objects (Phase 1):** Implemented Counting Semaphores and TCB-based blocking logic.
 - [x] **Kernel Objects (Phase 2):** Implemented Mutexes with **Ownership-check** and switched to **Priority-based Scheduling**.
-- [ ] **Kernel Objects (Phase 3):** (Upcoming) Priority Inheritance and Message Queues.
+- [x] **Kernel Objects (Phase 3):** Implemented **Priority Inheritance Protocol (PIP)** and **Message Queues** (fully verified via TeSSLa).
 
 ---
 
@@ -69,3 +69,41 @@ A global security flag `Global_OsIsRunning` prevents the `SysTick` from triggeri
 
 ## Documentation
 Detaillierte Definitionen, Funktionszyklen und technische Analysen sind in `RTOS_Dokumentation.tex` (Deutsch) dokumentiert.
+
+---
+
+## Automated Runtime Verification (TeSSLa)
+
+To ensure the kernel's correctness, we use **TeSSLa (Temporal Stream-based Specification Language)** to perform runtime verification of key RTOS properties directly on hardware traces:
+1. **Mutual Exclusion (`mutex_error`)**: Ensures that at most one task holds a mutex at any time.
+2. **Response Time Constraint (`deadline_violation`)**: Ensures that the high-priority task (Task 1) is scheduled within 15 ms of entering the `Ready` state.
+3. **Priority Inversion Prevention (`medium_running_during_inversion`)**: Verifies that the Priority Inheritance Protocol (PIP) operates correctly by checking that a medium-priority task (Task 2) never pre-empts/runs while the high-priority task (Task 1) is blocked on a mutex held by the low-priority task (Task 3).
+
+### Automated Pipeline Components
+We have automated the process of compiling, recording traces from the board, filtering the data, and running the verification engine:
+
+- **`clean_trace.py`**: A Python cleaning script that parses raw serial logs. It:
+  - Filters out any lines not conforming to the `timestamp: variable = value` TeSSLa format.
+  - Detects hardware resets (timestamps reset to near 0) and discards old data to maintain strict timestamp monotonicity.
+  - Removes outliers/corrupted lines caused by UART synchronization issues.
+- **`verify_live.ps1`**: A PowerShell script that automates the entire loop:
+  1. Opens the target COM port (e.g., `COM16`) at `115200` baud.
+  2. Resets the target STM32 MCU via DTR/RTS serial signals.
+  3. Records the raw serial data for a specified duration (e.g., 25 seconds).
+  4. Runs `clean_trace.py` to produce a cleaned, monotonic trace file (`dos_Tessla_filtered.txt`).
+  5. Feeds the cleaned trace and `tessla/verification.tessla` into the TeSSLa interpreter (`tessla-assembly-2.1.0.jar`) to run the checks.
+- **`verify.bat`**: A quick batch script helper to clean an existing `dos_Tessla.txt` file and run TeSSLa on it.
+
+### How to Run the Automated Live Verification
+To execute a live capture and verification run on COM16:
+```powershell
+.\verify_live.ps1 -PortName COM16 -DurationSeconds 25
+```
+
+### Verification Results Summary
+During our automated testing, we recorded the target executing a scenario with three tasks (`TaskHigh` - ID 1, `TaskMedium` - ID 2, `TaskLow` - ID 3) sharing a Mutex. 
+Running the verification yielded **zero violations** over the entire trace, confirming the kernel's real-time safety properties:
+- **`mutex_error = false`**: Mutual exclusion holds perfectly.
+- **`deadline_violation = false`**: The high-priority task meets all response time deadlines (< 15 ms).
+- **`medium_running_during_inversion = false`**: Priority inheritance behaves correctly—Task 2 never runs while Task 1 is waiting on Task 3, proving that priority inversion is successfully avoided.
+

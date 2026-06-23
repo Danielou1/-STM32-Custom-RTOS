@@ -239,18 +239,20 @@ void Kernel_TaskDelay(uint32_t u32DelayInTicks)
 {
     if (Global_PointerToCurrentlyRunningTCB != NULL && u32DelayInTicks > 0)
     {
-        /* Kritischer Abschnitt: Task blockieren */
-        Global_PointerToCurrentlyRunningTCB->u32TicksToWait = u32DelayInTicks;
-        Global_PointerToCurrentlyRunningTCB->eTaskState = TaskState_Blocked;
-
-        /* TeSSLa Logging fuer Task-Blockierung (Delay) */
+        /* TeSSLa Logging fuer Task-Blockierung (Delay) - print first while task is still running */
         if (Global_IndexDerAktuellenTask != 0) {
             printf("%lu: task_state = %d\r\n", HAL_GetTick(), Global_IndexDerAktuellenTask);
             printf("%lu: state_val = 3\r\n", HAL_GetTick()); // 3 = Blocked
         }
 
+        /* Kritischer Abschnitt: Task blockieren */
+        __disable_irq();
+        Global_PointerToCurrentlyRunningTCB->u32TicksToWait = u32DelayInTicks;
+        Global_PointerToCurrentlyRunningTCB->eTaskState = TaskState_Blocked;
+
         /* Sofortigen Kontextwechsel anfordern, da die Task nicht mehr laufen kann */
         Kernel_RequestContextSwitch();
+        __enable_irq();
     }
 }
 
