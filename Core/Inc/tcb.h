@@ -6,7 +6,7 @@
 
 #include <stdint.h>
 
-#define TCB_TASK_STACK_SIZE                 ( 128u )
+#define TCB_TASK_STACK_SIZE                 ( 256u )
 
 typedef enum
 {
