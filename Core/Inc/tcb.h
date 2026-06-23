@@ -25,7 +25,9 @@ typedef struct
     TCB_eTastStates_t eTaskState;                /* Offset 4: Zustand der Task */
     uint32_t u32TicksToWait;                     /* Offset 8: Verbleibende Zeit im Blocked-State */
     void *pWaitingObject;                        /* Offset 12: Objekt, auf das die Task wartet (z.B. ein Semaphor) */
-    uint32_t au32TaskStack[TCB_TASK_STACK_SIZE]; /* Offset 16: Eigener Stack-Bereich */
+    uint8_t u8CurrentPriority;                   /* Offset 16: Aktuelle Priorität (für Vererbung) */
+    uint8_t u8BasePriority;                      /* Offset 17: Ursprüngliche Priorität */
+    uint32_t au32TaskStack[TCB_TASK_STACK_SIZE]; /* Offset 20: Eigener Stack-Bereich */
 } __attribute__((aligned(8))) TCB_sctTCB_t;
 
 #endif /* DOS_INC_TCB_H_ */

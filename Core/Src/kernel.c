@@ -70,20 +70,32 @@ uint32_t Kernel_ContextSwitch(uint32_t current_sp)
         }
     }
 
-    /* 2. Auswahl des nächsten Tasks (Round Robin über alle READY Tasks) */
-    for (uint8_t i = 0; i < Global_TotalNumberOfCreatedTasks; i++)
-    {
-        Global_IndexDerAktuellenTask++;
-        if (Global_IndexDerAktuellenTask >= Global_TotalNumberOfCreatedTasks)
-        {
-            Global_IndexDerAktuellenTask = 0;
-        }
+    /* 2. Auswahl des nächsten Tasks (Priority-Based Scheduling mit Fairness) */
+    /* Warum? Wenn mehrere Tasks die gleiche höchste Priorität haben, sollen sie 
+       abwechselnd (Round-Robin) dran kommen, um Starvation zu verhindern. */
+    uint8_t u8HighestPrioFound = 255;
+    uint8_t u8BestTaskIndex = 0; /* IMMER mit dem Idle-Task als Fallback starten! */
 
-        if (Global_ArrayOfAllTCBs[Global_IndexDerAktuellenTask].eTaskState == TaskState_Ready)
+    for (uint8_t i = 1; i <= Global_TotalNumberOfCreatedTasks; i++)
+    {
+        /* Wir starten die Suche bei der NÄCHSTEN Task nach der aktuellen (Ringpuffer-Logik) */
+        uint8_t idx = (Global_IndexDerAktuellenTask + i) % Global_TotalNumberOfCreatedTasks;
+        
+        if (Global_ArrayOfAllTCBs[idx].eTaskState == TaskState_Ready || 
+            Global_ArrayOfAllTCBs[idx].eTaskState == TaskState_Running)
         {
-            break; /* Passende Task gefunden! */
+            /* Minimum-Suche: Wir suchen die kleinste Prio-Zahl. 
+               Da wir bei 'Current + 1' starten, finden wir bei gleicher Prio automatisch die nächste Task. */
+            if (Global_ArrayOfAllTCBs[idx].u8CurrentPriority < u8HighestPrioFound)
+            {
+                u8HighestPrioFound = Global_ArrayOfAllTCBs[idx].u8CurrentPriority;
+                u8BestTaskIndex = idx;
+            }
         }
     }
+
+    /* Wir aktualisieren den globalen Index mit unserer Entscheidung */
+    Global_IndexDerAktuellenTask = u8BestTaskIndex;
 
     /* 3. Lädt den neuen Task */
     Global_PointerToCurrentlyRunningTCB = &Global_ArrayOfAllTCBs[Global_IndexDerAktuellenTask];
@@ -109,11 +121,11 @@ void Kernel_InitializeHardwareAndTCBStructures(void)
     Global_TotalNumberOfCreatedTasks = 0;
     Global_PointerToCurrentlyRunningTCB = NULL;
 
-    /* Automatische Erstellung des Idle-Tasks an Position 0 */
-    Kernel_CreateNewTask(Kernel_IdleTask);
+    /* Automatische Erstellung des Idle-Tasks an Position 0 mit niedrigster Priorität */
+    Kernel_CreateNewTask(Kernel_IdleTask, 255);
 }
 
-Kernel_ErrorStatus_Enumeration_t Kernel_CreateNewTask(Kernel_TaskEntryPointFunctionPointer_t taskFunctionPointer)
+Kernel_ErrorStatus_Enumeration_t Kernel_CreateNewTask(Kernel_TaskEntryPointFunctionPointer_t taskFunctionPointer, uint8_t u8Priority)
 {
     if (Global_TotalNumberOfCreatedTasks >= KERNEL_MAXIMUM_NUMBER_OF_TASKS) return KernelError_TCBArrayIsFull;
     if (taskFunctionPointer == NULL) return KernelError_InvalidParameterProvided;
@@ -122,6 +134,12 @@ Kernel_ErrorStatus_Enumeration_t Kernel_CreateNewTask(Kernel_TaskEntryPointFunct
     pTCB->eTaskState = TaskState_Ready;
     pTCB->u32TicksToWait = 0;
     pTCB->pWaitingObject = NULL;
+    
+    /* Prioritäten initialisieren (Das "Warum") */
+    /* BasePriority für die Wiederherstellung nach Vererbung, 
+       CurrentPriority für den Scheduler */
+    pTCB->u8BasePriority = u8Priority;
+    pTCB->u8CurrentPriority = u8Priority;
 
     /* 1. Platzierung des Stack-Pointers am ENDE des Arrays (Full Descending) */
     uint32_t *sp = &pTCB->au32TaskStack[TCB_TASK_STACK_SIZE];
@@ -177,16 +195,19 @@ void Kernel_UpdateTimers(void)
     {
         if (Global_ArrayOfAllTCBs[i].eTaskState == TaskState_Blocked)
         {
+            /* Nur wenn die Task wegen Zeit blockiert ist (Ticks > 0) */
             if (Global_ArrayOfAllTCBs[i].u32TicksToWait > 0)
             {
                 Global_ArrayOfAllTCBs[i].u32TicksToWait--;
-            }
 
-            /* Zeit abgelaufen? Task wieder bereit machen */
-            if (Global_ArrayOfAllTCBs[i].u32TicksToWait == 0)
-            {
-                Global_ArrayOfAllTCBs[i].eTaskState = TaskState_Ready;
+                /* Erst wenn der Timer abgelaufen ist, wecken wir sie auf */
+                if (Global_ArrayOfAllTCBs[i].u32TicksToWait == 0)
+                {
+                    Global_ArrayOfAllTCBs[i].eTaskState = TaskState_Ready;
+                }
             }
+            /* Wenn Ticks == 0, bedeutet das, die Task wartet auf ein Objekt (Semaphor/Mutex)
+               und darf NICHT hier auf Ready gesetzt werden! */
         }
     }
 }
@@ -219,6 +240,7 @@ void Kernel_SemaphoreInit(Kernel_Semaphore_t *pSemaphore, uint32_t u32InitialCou
 {
     if (pSemaphore != NULL)
     {
+        pSemaphore->eObjectType = KernelObjectType_Semaphore;
         pSemaphore->u32Count = u32InitialCount;
         pSemaphore->u32MaxCount = u32MaxCount;
     }
@@ -286,6 +308,328 @@ void Kernel_SemaphoreGive(Kernel_Semaphore_t *pSemaphore)
     }
 
     __enable_irq();
+}
+
+/* --- Abschnitt 5: Mutex-Logik --- */
+
+void Kernel_MutexInit(Kernel_Mutex_t *pMutex)
+{
+    if (pMutex != NULL)
+    {
+        pMutex->eObjectType = KernelObjectType_Mutex;
+        pMutex->pOwner = NULL;
+        pMutex->u8IsLocked = 0;
+    }
+}
+
+void Kernel_MutexLock(Kernel_Mutex_t *pMutex)
+{
+    if (pMutex == NULL) return;
+
+    while (1)
+    {
+        /* Kritischer Abschnitt: Unterbrechungen deaktivieren */
+        __disable_irq();
+
+        if (pMutex->u8IsLocked == 0)
+        {
+            /* Mutex ist frei: Aktuelle Task wird Besitzer */
+            pMutex->u8IsLocked = 1;
+            pMutex->pOwner = Global_PointerToCurrentlyRunningTCB;
+            __enable_irq();
+            return; /* Erfolg: Wir besitzen den Mutex */
+        }
+        else
+        {
+            /* Mutex ist besetzt: Task blockieren */
+            if (Global_PointerToCurrentlyRunningTCB != NULL)
+            {
+                Global_PointerToCurrentlyRunningTCB->pWaitingObject = (void*)pMutex;
+                Global_PointerToCurrentlyRunningTCB->eTaskState = TaskState_Blocked;
+
+                /* Priority Inheritance: Priorität des Mutex-Besitzers anheben */
+                TCB_sctTCB_t *pOwner = pMutex->pOwner;
+                if (pOwner != NULL)
+                {
+                    /* Höhere Priorität entspricht einer kleineren Zahl */
+                    if (Global_PointerToCurrentlyRunningTCB->u8CurrentPriority < pOwner->u8CurrentPriority)
+                    {
+                        pOwner->u8CurrentPriority = Global_PointerToCurrentlyRunningTCB->u8CurrentPriority;
+
+                        /* Transitive Vererbung: falls der Besitzer selbst blockiert ist */
+                        TCB_sctTCB_t *pNextOwner = pOwner;
+                        while (pNextOwner->pWaitingObject != NULL)
+                        {
+                            Kernel_ObjectHeader_t *pNextHeader = (Kernel_ObjectHeader_t *)pNextOwner->pWaitingObject;
+                            if (pNextHeader->eObjectType == KernelObjectType_Mutex)
+                            {
+                                Kernel_Mutex_t *pNextMutex = (Kernel_Mutex_t *)pNextHeader;
+                                TCB_sctTCB_t *pOwnerOfNextMutex = pNextMutex->pOwner;
+                                if (pOwnerOfNextMutex != NULL && pNextOwner->u8CurrentPriority < pOwnerOfNextMutex->u8CurrentPriority)
+                                {
+                                    pOwnerOfNextMutex->u8CurrentPriority = pNextOwner->u8CurrentPriority;
+                                    pNextOwner = pOwnerOfNextMutex;
+                                }
+                                else
+                                {
+                                    break;
+                                }
+                            }
+                            else
+                            {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                /* Kontextwechsel anfordern */
+                Kernel_RequestContextSwitch();
+            }
+        }
+
+        /* Nach dem Aufwecken: Interrupts kurz an und wieder von vorn prüfen */
+        __enable_irq();
+    }
+}
+
+void Kernel_MutexUnlock(Kernel_Mutex_t *pMutex)
+{
+    /* Kritischer Abschnitt: Unterbrechungen deaktivieren */
+    __disable_irq();
+
+    if (pMutex != NULL)
+    {
+        /* Ownership-Prüfung: Nur der Besitzer darf das Mutex freigeben! */
+        if (pMutex->pOwner == Global_PointerToCurrentlyRunningTCB)
+        {
+            TCB_sctTCB_t *pOwner = pMutex->pOwner;
+
+            pMutex->u8IsLocked = 0;
+            pMutex->pOwner = NULL;
+
+            /* Prioritätsvererbung aufheben: Priorität neu berechnen */
+            uint8_t u8NewPriority = pOwner->u8BasePriority;
+            for (uint8_t i = 0; i < Global_TotalNumberOfCreatedTasks; i++)
+            {
+                if (Global_ArrayOfAllTCBs[i].eTaskState == TaskState_Blocked &&
+                    Global_ArrayOfAllTCBs[i].pWaitingObject != NULL)
+                {
+                    Kernel_ObjectHeader_t *pHeader = (Kernel_ObjectHeader_t *)Global_ArrayOfAllTCBs[i].pWaitingObject;
+                    if (pHeader->eObjectType == KernelObjectType_Mutex)
+                    {
+                        Kernel_Mutex_t *pWmutex = (Kernel_Mutex_t *)pHeader;
+                        /* Wenn diese Task auf einen Mutex wartet, den der Besitzer hält */
+                        if (pWmutex->pOwner == pOwner)
+                        {
+                            if (Global_ArrayOfAllTCBs[i].u8CurrentPriority < u8NewPriority)
+                            {
+                                u8NewPriority = Global_ArrayOfAllTCBs[i].u8CurrentPriority;
+                            }
+                        }
+                    }
+                }
+            }
+            pOwner->u8CurrentPriority = u8NewPriority;
+
+            /* Die wartende Task mit der höchsten Priorität aufwecken */
+            TCB_sctTCB_t *pTaskToWake = NULL;
+            uint8_t u8HighestWaitingPrio = 255;
+            for (uint8_t i = 0; i < Global_TotalNumberOfCreatedTasks; i++)
+            {
+                if (Global_ArrayOfAllTCBs[i].eTaskState == TaskState_Blocked &&
+                    Global_ArrayOfAllTCBs[i].pWaitingObject == (void*)pMutex)
+                {
+                    if (Global_ArrayOfAllTCBs[i].u8CurrentPriority < u8HighestWaitingPrio)
+                    {
+                        u8HighestWaitingPrio = Global_ArrayOfAllTCBs[i].u8CurrentPriority;
+                        pTaskToWake = &Global_ArrayOfAllTCBs[i];
+                    }
+                }
+            }
+
+            if (pTaskToWake != NULL)
+            {
+                /* Task bereit machen */
+                pTaskToWake->eTaskState = TaskState_Ready;
+                pTaskToWake->pWaitingObject = NULL;
+
+                /* Kontextwechsel anfordern */
+                Kernel_RequestContextSwitch();
+            }
+        }
+    }
+
+    __enable_irq();
+}
+
+/* --- Abschnitt 6: Message-Queue-Logik --- */
+
+void Kernel_QueueInit(Kernel_Queue_t *pQueue, uint8_t u8Size)
+{
+    if (pQueue != NULL)
+    {
+        pQueue->eObjectType = KernelObjectType_Queue;
+        pQueue->u8Head = 0;
+        pQueue->u8Tail = 0;
+        pQueue->u8Count = 0;
+        pQueue->u8Size = (u8Size > KERNEL_QUEUE_MAX_SIZE) ? KERNEL_QUEUE_MAX_SIZE : u8Size;
+        memset(pQueue->au32Buffer, 0, sizeof(pQueue->au32Buffer));
+    }
+}
+
+uint8_t Kernel_QueueIsEmpty(Kernel_Queue_t *pQueue)
+{
+    uint8_t isEmpty = 0;
+    if (pQueue != NULL)
+    {
+        __disable_irq();
+        isEmpty = (pQueue->u8Count == 0);
+        __enable_irq();
+    }
+    return isEmpty;
+}
+
+uint8_t Kernel_QueueIsFull(Kernel_Queue_t *pQueue)
+{
+    uint8_t isFull = 0;
+    if (pQueue != NULL)
+    {
+        __disable_irq();
+        isFull = (pQueue->u8Count >= pQueue->u8Size);
+        __enable_irq();
+    }
+    return isFull;
+}
+
+Kernel_ErrorStatus_Enumeration_t Kernel_QueueSend(Kernel_Queue_t *pQueue, uint32_t u32Message, uint8_t u8Blocking)
+{
+    if (pQueue == NULL) return KernelError_InvalidParameterProvided;
+
+    while (1)
+    {
+        __disable_irq();
+
+        if (pQueue->u8Count < pQueue->u8Size)
+        {
+            /* Platz frei: in den Ringpuffer schreiben */
+            pQueue->au32Buffer[pQueue->u8Head] = u32Message;
+            pQueue->u8Head = (pQueue->u8Head + 1) % pQueue->u8Size;
+            pQueue->u8Count++;
+
+            /* Eine wartende Task (die auf Daten wartet) mit höchster Prio aufwecken */
+            TCB_sctTCB_t *pTaskToWake = NULL;
+            uint8_t u8HighestWaitingPrio = 255;
+            for (uint8_t i = 0; i < Global_TotalNumberOfCreatedTasks; i++)
+            {
+                if (Global_ArrayOfAllTCBs[i].eTaskState == TaskState_Blocked &&
+                    Global_ArrayOfAllTCBs[i].pWaitingObject == (void*)pQueue)
+                {
+                    if (Global_ArrayOfAllTCBs[i].u8CurrentPriority < u8HighestWaitingPrio)
+                    {
+                        u8HighestWaitingPrio = Global_ArrayOfAllTCBs[i].u8CurrentPriority;
+                        pTaskToWake = &Global_ArrayOfAllTCBs[i];
+                    }
+                }
+            }
+
+            if (pTaskToWake != NULL)
+            {
+                pTaskToWake->eTaskState = TaskState_Ready;
+                pTaskToWake->pWaitingObject = NULL;
+                Kernel_RequestContextSwitch();
+            }
+
+            __enable_irq();
+            return KernelError_NoErrorMessage;
+        }
+        else
+        {
+            /* Puffer voll */
+            if (u8Blocking == 0)
+            {
+                __enable_irq();
+                return KernelError_QueueFull;
+            }
+            else
+            {
+                /* Blockieren: in Blocked-State setzen */
+                if (Global_PointerToCurrentlyRunningTCB != NULL)
+                {
+                    Global_PointerToCurrentlyRunningTCB->pWaitingObject = (void*)pQueue;
+                    Global_PointerToCurrentlyRunningTCB->eTaskState = TaskState_Blocked;
+                    Kernel_RequestContextSwitch();
+                }
+            }
+        }
+
+        __enable_irq();
+    }
+}
+
+Kernel_ErrorStatus_Enumeration_t Kernel_QueueReceive(Kernel_Queue_t *pQueue, uint32_t *pu32Message, uint8_t u8Blocking)
+{
+    if (pQueue == NULL || pu32Message == NULL) return KernelError_InvalidParameterProvided;
+
+    while (1)
+    {
+        __disable_irq();
+
+        if (pQueue->u8Count > 0)
+        {
+            /* Nachricht vorhanden: aus Ringpuffer lesen */
+            *pu32Message = pQueue->au32Buffer[pQueue->u8Tail];
+            pQueue->u8Tail = (pQueue->u8Tail + 1) % pQueue->u8Size;
+            pQueue->u8Count--;
+
+            /* Eine wartende Task (die auf freien Platz wartet) mit höchster Prio aufwecken */
+            TCB_sctTCB_t *pTaskToWake = NULL;
+            uint8_t u8HighestWaitingPrio = 255;
+            for (uint8_t i = 0; i < Global_TotalNumberOfCreatedTasks; i++)
+            {
+                if (Global_ArrayOfAllTCBs[i].eTaskState == TaskState_Blocked &&
+                    Global_ArrayOfAllTCBs[i].pWaitingObject == (void*)pQueue)
+                {
+                    if (Global_ArrayOfAllTCBs[i].u8CurrentPriority < u8HighestWaitingPrio)
+                    {
+                        u8HighestWaitingPrio = Global_ArrayOfAllTCBs[i].u8CurrentPriority;
+                        pTaskToWake = &Global_ArrayOfAllTCBs[i];
+                    }
+                }
+            }
+
+            if (pTaskToWake != NULL)
+            {
+                pTaskToWake->eTaskState = TaskState_Ready;
+                pTaskToWake->pWaitingObject = NULL;
+                Kernel_RequestContextSwitch();
+            }
+
+            __enable_irq();
+            return KernelError_NoErrorMessage;
+        }
+        else
+        {
+            /* Puffer leer */
+            if (u8Blocking == 0)
+            {
+                __enable_irq();
+                return KernelError_QueueEmpty;
+            }
+            else
+            {
+                /* Blockieren: in Blocked-State setzen */
+                if (Global_PointerToCurrentlyRunningTCB != NULL)
+                {
+                    Global_PointerToCurrentlyRunningTCB->pWaitingObject = (void*)pQueue;
+                    Global_PointerToCurrentlyRunningTCB->eTaskState = TaskState_Blocked;
+                    Kernel_RequestContextSwitch();
+                }
+            }
+        }
+
+        __enable_irq();
+    }
 }
 
 __attribute__((naked)) void PendSV_Handler(void)
