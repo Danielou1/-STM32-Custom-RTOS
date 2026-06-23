@@ -246,6 +246,38 @@ setvbuf(stdout, NULL, _IONBF, 0);
     \end{lstlisting}
 \end{itemize}
 
+\subsection{Laufzeit-Verifizierung mit TeSSLa}
+Um die formale Korrektheit des Kernels unter Echtzeitbedingungen nachzuweisen, wurde eine Laufzeit-Verifizierung (Runtime Verification) mit der Spezifikationssprache \textbf{TeSSLa} (Temporal Stream-based Specification Language) realisiert.
+
+Die Verifizierung stützt sich auf drei Eingangs-Datenströme, die vom STM32 über die UART-Schnittstelle ausgegeben werden:
+\begin{itemize}
+    \item \texttt{active\_task}: ID der aktuell aktiven Task bei jedem Kontextwechsel.
+    \item \texttt{task\_state} und \texttt{state\_val}: Zustandsübergänge der Tasks (z. B. $1 = \text{Ready}$, $2 = \text{Running}$, $3 = \text{Blocked}$).
+    \item \texttt{mutex\_id}, \texttt{mutex\_task} und \texttt{mutex\_action}: Mutex-Aktivitäten (Sperren, Freigeben).
+\end{itemize}
+
+Im Rahmen des Projekts werden drei kritische Eigenschaften formal überwacht:
+\begin{enumerate}
+    \item \textbf{Gegenseitiger Ausschluss (\texttt{mutex\_error}):} Es wird verifiziert, dass sich niemals zwei Tasks gleichzeitig im kritischen Abschnitt desselben Mutex befinden. Ein Fehler wird ausgelöst, wenn versucht wird, einen bereits gesperrten Mutex erneut zu sperren.
+    \item \textbf{Reaktionszeit-Schranke (\texttt{deadline\_violation}):} Die hochpriore Task (\texttt{TaskHigh}, ID 1) muss innerhalb von maximal 15 Millisekunden nach dem Eintritt in den Zustand \texttt{Ready} ausgeführt werden (\texttt{Running}).
+    \item \textbf{Prioritätsinversions-Vermeidung (\texttt{medium\_running\_during\_inversion}):} Prüft die Funktion des Priority Inheritance Protocols (PIP). Falls Task 1 (High) blockiert ist, da Task 3 (Low) einen benötigten Mutex hält, darf Task 2 (Medium) nicht ausgeführt werden (keine unbeschränkte Prioritätsinversion).
+\end{enumerate}
+
+\subsubsection{Automatisierte Test-Pipeline}
+Die Erfassung und Prüfung wurde über eine automatisierte Kette von Skripten gelöst:
+\begin{itemize}
+    \item \textbf{\texttt{clean\_trace.py}:} Ein Python-Skript, das die rohen UART-Protokolle bereinigt. Es filtert Zeilen im ungültigen Format aus, entfernt durch serielle Synchronisationsartefakte entstandene Ausreißer und erkennt Hardware-Resets (Rücksprung des SysTick-Zeitstempels auf nahe 0), um streng monoton steigende Zeitstempel für TeSSLa zu garantieren.
+    \item \textbf{\texttt{verify\_live.ps1}:} Ein PowerShell-Skript, das den seriellen Port (Standard \texttt{COM16}) bei 115200 Baud öffnet, das STM32-Board per DTR/RTS-Signalen zurücksetzt, den Ausgang für 25 Sekunden aufzeichnet, den Trace über \texttt{clean\_trace.py} filtert und den TeSSLa-Interpreter (\texttt{tessla-assembly-2.1.0.jar}) ausführt.
+\end{itemize}
+
+\subsubsection{Ergebnisse}
+Die Live-Verifikation der Task-Interaktionen auf der Hardware liefert folgendes Ergebnis:
+\begin{itemize}
+    \item \texttt{mutex\_error = false}: Der gegenseitige Ausschluss ist zu jedem Zeitpunkt gewahrt.
+    \item \texttt{deadline\_violation = false}: Die Antwortzeit von Task 1 liegt stets weit unterhalb der 15 ms Schranke.
+    \item \texttt{medium\_running\_during_inversion = false}: Task 2 (Medium) wird während der Blockierung von Task 1 (High) auf Task 3 (Low) blockiert bzw. nicht ausgeführt, was die fehlerfreie Funktion des PIP-Vererbungspfades nachweist.
+\end{itemize}
+
 \section{Referenzen}
 \begin{itemize}
     \item PM0214: STM32 Cortex-M4 Programming Manual.

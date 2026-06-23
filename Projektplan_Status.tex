@@ -17,7 +17,7 @@
 \section{Aktueller Status (KW 26 - 23. Juni)}
 Das RTOS hat den Meilenstein der Kernel-Objekte und des Schedulers planmäßig erreicht. Alle Kernfunktionalitäten sind implementiert und auf Hardware verifiziert.
 
-\subsection{Abgeschlossen (Kernel-Erweiterungen)}
+\subsection{Abgeschlossen (Kernel-Erweiterungen \& Verifizierung)}
 \begin{itemize}
     \item \textbf{Blocking-State \& Delay (KW 20):} Effizientes blockierendes Warten ohne CPU-Last.
     \item \textbf{Semaphoren (KW 23):} Vollständige Implementierung von Counting Semaphores mit TCB-Blockierlogik.
@@ -25,15 +25,12 @@ Das RTOS hat den Meilenstein der Kernel-Objekte und des Schedulers planmäßig e
     \item \textbf{Mutexe \& Priority Inheritance (KW 24):} Mutex-Implementierung mit strenger Ownership-Prüfung und transitivem Prioritätsvererbungs-Protokoll zur Vermeidung von Prioritätsinversion.
     \item \textbf{Message Queues (KW 25):} Ring-Buffer-basierte Kommunikationskanäle mit blockierenden und nicht-blockierenden Send/Receive Operationen.
     \item \textbf{Meilenstein Kernel (KW 26):} Erfolgreicher Abschluss der Kernel-Objekte und Integrationstest auf Hardware via J-Link.
+    \item \textbf{Instrumentierung \& Analyse (KW 26):} Integration von Segger SystemView zur visuellen Laufzeitanalyse des Kernels.
+    \item \textbf{Verifizierung (KW 26):} Spezifikation der Echtzeiteigenschaften in TeSSLa und Implementierung einer automatisierten Live-Test-Pipeline (Python/PowerShell) zur Laufzeitüberwachung direkt über UART.
+    \item \textbf{Dokumentation (KW 26):} Erfolgreicher Abschluss und Feinschliff der technischen Dokumentation (\texttt{RTOS\_Dokumentation.tex}).
 \end{itemize}
 
-\section{Der Weg nach vorn (KW 26+)}
-
-\subsection{Nächster Schritt: Verifizierung \& Dokumentation (Abschlussphase)}
-\begin{itemize}
-    \item \textbf{Instrumentierung:} Integration von Segger SystemView zur visuellen Laufzeitanalyse des Kernels.
-    \item \textbf{Verifizierung:} Spezifikation von Überwachungseigenschaften und Setup der TeSSLa Test-Pipeline.
-    \item \textbf{Feinschliff:} Vervollständigung der Abschlussdokumentation (RTOS\_Dokumentation.tex).
-\end{itemize}
+\section{Fazit}
+Das Projekt wurde erfolgreich abgeschlossen. Alle funktionalen Anforderungen an den Kernel, die Synchronisationsmechanismen, die Inter-Task-Kommunikation sowie die Werkzeuge zur Verifikation und Echtzeitanalyse wurden vollständig implementiert, integriert und formal verifiziert.
 
 \end{document}
