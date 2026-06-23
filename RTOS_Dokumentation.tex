@@ -232,6 +232,20 @@ Die Kernel-API bietet für Lese- und Schreiboperationen sowohl blockierende als 
     \item \textbf{Puffer leer (Blockierend):} Die lesende Task blockiert und wartet, bis ein Producer Daten sendet.
 \end{itemize}
 
+\section{Debugging \& Verifizierung via UART}
+Zur Live-Diagnose des Schedulers und der Kernel-Objekte wurde eine serielle Debug-Ausgabe über die virtuelle COM-Schnittstelle (VCP) des Debug-Adapters (ST-Link / J-Link) eingerichtet.
+
+\subsection{UART-Redirection und Standard-Ausgabe}
+Da die Standard-C-Bibliothek (\texttt{printf}) auf eingebetteten Systemen nicht standardmäßig mit einer physischen Schnittstelle verknüpft ist, wurden folgende Schritte implementiert:
+\begin{itemize}
+    \item \textbf{\_\_io\_putchar Redirection:} Die schwache Definition von \texttt{\_\_io\_putchar} wurde in \texttt{main.c} überschrieben. Jeder über \texttt{printf} ausgegebene Charakter wird zeichenweise via \texttt{HAL\_UART\_Transmit} über das Peripheriegerät \texttt{huart1} (USART1) gesendet.
+    \item \textbf{ST-Link VCP Pin-Belegung:} Auf dem B-L475E-IOT01A Discovery Board ist das physische VCP-Interface mit dem Peripheriegerät \textbf{USART1} auf den Pins \textbf{PB6 (TX)} und \textbf{PB7 (RX)} verbunden (als \texttt{ST\_LINK\_UART1} deklariert). Die Umleitung auf USART3 wurde korrigiert, da USART3 intern für das Wi-Fi-Modul reserviert ist.
+    \item \textbf{Buffer-Deaktivierung (setvbuf):} Standardmäßig puffert die C-Laufzeitbibliothek (\textit{Newlib-nano}) die Ausgaben auf \texttt{stdout}. Um zu verhindern, dass Debug-Nachrichten im RAM gehalten werden und die Konsole leer bleibt, wird zu Beginn des Hauptprogramms die Pufferung komplett deaktiviert:
+    \begin{lstlisting}[language=C]
+setvbuf(stdout, NULL, _IONBF, 0);
+    \end{lstlisting}
+\end{itemize}
+
 \section{Referenzen}
 \begin{itemize}
     \item PM0214: STM32 Cortex-M4 Programming Manual.
